@@ -1,0 +1,52 @@
+# Build outputs
+build/
+bin/
+out/
+
+# CMake
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles/
+cmake/presets/include/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.cache
+*.ipch
+*.obj
+*.lib
+*.exp
+*.ilk
+*.pdb
+*.ncb
+*.scc
+*.vspscc
+*.vcxproj.filters
+*.tlog/
+lastbuild.state
+
+# Windows
+ Thumbs.db
+ ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Debug / Release artifacts
+Debug/
+Release/
+x64/
+*.log
+
+# vcpkg
+vcpkg/
+
+# opencode config (may contain secrets)
+opencode.json
