@@ -1,15 +1,18 @@
 #pragma once
 
-#include <string>
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
 
-struct GLFWwindow;
+#include <string>
+#include <vector>
+#include <glm/glm.hpp>
 
 namespace CoreEngine {
 
-    struct Vector2 {
-        float x, y;
-        Vector2() : x(0), y(0) {}
-        Vector2(float xx, float yy) : x(xx), y(yy) {}
+    struct Vector3 {
+        float x, y, z;
+        Vector3() : x(0), y(0), z(0) {}
+        Vector3(float xx, float yy, float zz) : x(xx), y(yy), z(zz) {}
     };
 
     struct EngineInfo {
@@ -18,21 +21,87 @@ namespace CoreEngine {
         std::string name;
     };
 
-    static constexpr const char* ENGINE_NAME = "Test3Engine";
-    static constexpr int VERSION_MAJOR = 1;
-    static constexpr int VERSION_MINOR = 0;
+    // Vertex layout: position(3) + normal(3) + uv(2) = 8 floats
+    struct VertexPositionNormalUV {
+        float pos[3];
+        float normal[3];
+        float uv[2];
+        static int stride() { return sizeof(VertexPositionNormalUV); }
+    };
 
+    // Mesh data (produced by asset loader or primitives)
+    struct PrimitiveMesh {
+        std::string name;
+        GLuint VAO = 0;
+        GLuint VBO = 0;
+        GLuint EBO = 0;
+        uint32_t indexCount = 0;
+    };
+
+    // Loaded FBX (from asset_loader.cpp)
+    struct FBXModel {
+        bool success = false;
+        std::string filename;
+        std::vector<PrimitiveMesh> meshes;
+    };
+
+    // Scene object — placed by editor
+    struct SceneObject {
+        PrimitiveMesh mesh;
+        Vector3 position  = {0, 0, 0};
+        Vector3 rotation  = {0, 0, 0};   // Euler radians
+        Vector3 scale     = {1, 1, 1};
+    };
+
+    static constexpr const char* ENGINE_NAME   = "ShadowEngine";
+    static constexpr int         VERSION_MAJOR   = 2;
+    static constexpr int         VERSION_MINOR   = 0;
+
+    // Lifecycle
     void Init();
     void Shutdown();
-    
     std::string GetEngineName();
     void GetVersion(int& major, int& minor);
     EngineInfo GetEngineInfo(int width, int height);
-    
+
+    // Renderer (existing)
     bool InitRenderer(const char* title, int width, int height);
     GLFWwindow* GetWindow();
     void RenderBegin();
     void RenderEnd();
     bool ShouldClose();
 
-}  // namespace CoreEngine
+    // Shaders
+    GLuint CompileShader(GLenum type, const char* source);
+    GLuint CreateShaderProgram(const char* vsSource, const char* fsSource);
+    void UseShader(GLuint program);
+    void SetUniformMat4(GLuint program, const char* name, const glm::mat4& m);
+    void SetUniformVec3(GLuint program, const char* name, const glm::vec3& v);
+
+    // Mesh primitives (cube, plane — useful in editor/for testing)
+    void InitPrimitiveMeshes();
+    PrimitiveMesh CreateBox(const Vector3& size);
+    PrimitiveMesh CreatePlane(float width=1.0f, float height=1.0f);
+    void DestroyMesh(PrimitiveMesh& mesh);
+
+    // Scene management
+    std::vector<SceneObject>& GetSceneObjects();
+    SceneObject& AddToScene(const std::string& name, const PrimitiveMesh& mesh);
+    void ClearScene();
+
+    // Camera (FPS-style)
+    void SetCameraPosition(Vector3 pos);
+    void SetCameraDirection(Vector3 dir);
+    Vector3 GetCameraPosition();
+    Vector3 GetCameraDirection();
+    glm::mat4 GetProjectionMatrix(float fov, float aspect);
+    GLuint GetModelUniformLocation(GLuint prog, bool& found);
+
+    // Internal helpers (used by editor)
+    GLuint GetShaderProgram();
+    PrimitiveMesh* GetPrimitiveMesh(const char* name);
+
+    // Scene mesh builder — rebuilds scene VAOs from primitive templates
+    void RebuildSceneMeshes();
+
+} // namespace CoreEngine

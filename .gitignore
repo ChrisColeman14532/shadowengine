@@ -48,5 +48,12 @@ x64/
 # vcpkg
 vcpkg/
 
+# Shaders (compiled/output)
+shader/shader_output/
+shader/spv/
+
 # opencode config (may contain secrets)
 opencode.json
+
+# Agent instruction files
+AGENTS.md

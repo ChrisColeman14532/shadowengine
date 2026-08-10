@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
 
 # ============================================================
-# Test3Game - Game engine version 0
-# A C++ / OpenGL game engine with an editor
+# ShadowEngine - Game engine with asset loading support
+# C++17, MSVC / Visual Studio generator
 # ============================================================
 
-project(Test3Game VERSION 0.1.0 LANGUAGES CXX)
+project(ShadowEngine VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# ---- Find GLFW & OpenGL ----
+# ---- Find dependencies via vcpkg (GLEW, assimp), FetchContent for GLFW ----
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
     include(FetchContent)
@@ -23,6 +23,9 @@ if(NOT glfw3_FOUND)
 endif()
 
 find_package(OpenGL REQUIRED)
+find_package(GLEW CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 
 # ---- Engine library ----
 add_library(engine STATIC
@@ -34,6 +37,9 @@ target_include_directories(engine PUBLIC
 target_link_libraries(engine PUBLIC
     glfw
     OpenGL::GL
+    GLEW::GLEW
+    assimp::assimp
+    glm::glm-header-only
 )
 
 # ---- Editor executable ----
