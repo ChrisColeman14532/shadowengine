@@ -38,11 +38,19 @@ namespace CoreEngine {
         uint32_t indexCount = 0;
     };
 
+    // Raw mesh data (used by FBX loader for merging)
+    struct RawMeshData {
+        std::string name;
+        std::vector<float> vertices;
+        std::vector<uint32_t> indices;
+    };
+
     // Loaded FBX (from asset_loader.cpp)
     struct FBXModel {
         bool success = false;
         std::string filename;
         std::vector<PrimitiveMesh> meshes;
+        std::vector<RawMeshData> rawMeshes;
     };
 
     // Scene object — placed by editor

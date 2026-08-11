@@ -1,15 +1,61 @@
 #include "editor.h"
 #include "core/engine.h"
+#include "core/asset_loader.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <cmath>
 
-static CoreEngine::SceneObject* g_cube = nullptr;
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+static std::string g_lastLoadedFBX;
 
 static GLFWwindow* s_window = nullptr;
 
 namespace Editor {
+
+    static void LoadFBXAtPath(const std::string& path) {
+        AssetLoader::ClearAll();
+
+        CoreEngine::FBXModel model = AssetLoader::LoadFBX(path);
+        if (!model.success) {
+            printf("[Editor] Failed to load FBX '%s'\n", path.c_str());
+            return;
+        }
+
+        glm::vec3 modelCenter(0, 0, 0);
+        glm::vec3 modelExtent(1, 1, 1);
+        AssetLoader::ComputeModelAABB(model, modelCenter, modelExtent);
+
+        auto* win = CoreEngine::GetWindow();
+        int w = 1280, h = 720;
+        glfwGetFramebufferSize(win, &w, &h);
+
+        CoreEngine::ClearScene();
+
+        CoreEngine::AddToScene("ground", *CoreEngine::GetPrimitiveMesh("plane"));
+        auto& ground = CoreEngine::GetSceneObjects().back();
+        ground.position = {0, -2.0f, 0};
+        ground.scale = {10, 1, 10};
+
+        CoreEngine::PrimitiveMesh merged = AssetLoader::MergeFromModel(model);
+        CoreEngine::AddToScene("loaded_model", merged);
+
+        float maxX = fmaxf(modelExtent.x, modelExtent.y);
+        float maxDim = fmaxf(maxX, modelExtent.z);
+        for (int i = 0; i < 3; ++i) {
+            if (modelExtent[i] < 0.001f) modelExtent[i] = 1.0f;
+        }
+        maxDim = fmaxf(fmaxf(modelExtent.x, modelExtent.y), modelExtent.z);
+        float dist = maxDim * 4.0f;
+        if (dist < 5.0f) dist = 5.0f;
+        glm::vec3 camPos(modelCenter.x, modelCenter.y + dist * 0.3f, modelCenter.z - dist);
+        CoreEngine::SetCameraPosition({camPos.x, camPos.y, camPos.z});
+        CoreEngine::SetCameraDirection({modelCenter.x, modelCenter.y, modelCenter.z});
+    }
 
     GLFWwindow* Init() {
         CoreEngine::Init();
@@ -55,6 +101,24 @@ namespace Editor {
                     }
                 }
             }
+            if ((key == GLFW_KEY_L) && action == GLFW_PRESS) {
+#if defined(_WIN32)
+                char filePath[MAX_PATH] = {0};
+                OPENFILENAME ofn = {0};
+                ofn.lStructSize = sizeof(OPENFILENAME);
+                ofn.hwndOwner = 0;
+                ofn.lpstrFilter = "FBX Files (*.fbx)\0*.fbx\0All Files (*.*)\0*.*\0";
+                ofn.lpstrFile = filePath;
+                ofn.nMaxFile = MAX_PATH;
+                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                if (GetOpenFileName(&ofn)) {
+                    g_lastLoadedFBX = filePath;
+                    LoadFBXAtPath(filePath);
+                }
+#else
+                printf("[Editor] Press F1 to select an FBX file (native file dialog not implemented on this platform)\n");
+#endif
+            }
         });
 
         return CoreEngine::GetWindow();
@@ -73,26 +137,23 @@ namespace Editor {
 
         CoreEngine::RenderBegin();
 
-        auto& scene = CoreEngine::GetSceneObjects();
-        if (!s_defaultSceneAdded && scene.empty()) {
-            auto* cubeMesh = CoreEngine::GetPrimitiveMesh("cube");
-            auto* planeMesh = CoreEngine::GetPrimitiveMesh("plane");
-            if (cubeMesh && planeMesh) {
-                CoreEngine::AddToScene("default_cube", *cubeMesh);
-                auto& cube = CoreEngine::GetSceneObjects().back();
-                cube.position = {0, 0.5f, 0};
-                cube.scale = {1, 1, 1};  // Non-symmetric so rotation is visible
-                cube.rotation = {0.5f, 0.3f, 0};  // Initial rotation to make rotation visible
+        auto& sceneObjs = CoreEngine::GetSceneObjects();
 
+        // Ensure ground plane exists
+        bool hasGround = false;
+        for (const auto& obj : sceneObjs) {
+            if (obj.mesh.name == "ground") { hasGround = true; break; }
+        }
+        if (!hasGround) {
+            auto* planeMesh = CoreEngine::GetPrimitiveMesh("plane");
+            if (planeMesh) {
                 CoreEngine::AddToScene("ground", *planeMesh);
                 auto& plane = CoreEngine::GetSceneObjects().back();
                 plane.position = {0, -1.0f, 0};
                 plane.scale = {10, 1, 10};
             }
-            s_defaultSceneAdded = true;
         }
 
-        auto& sceneObjs = CoreEngine::GetSceneObjects();
         auto cameraPos = CoreEngine::GetCameraPosition();
         auto cameraDir = CoreEngine::GetCameraDirection();
 

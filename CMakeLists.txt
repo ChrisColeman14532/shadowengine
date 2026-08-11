@@ -30,6 +30,7 @@ find_package(glm CONFIG REQUIRED)
 # ---- Engine library ----
 add_library(engine STATIC
     engine/src/engine.cpp
+    engine/src/asset_loader.cpp
 )
 target_include_directories(engine PUBLIC
     engine/include
