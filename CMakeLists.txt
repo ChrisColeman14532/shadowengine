@@ -27,6 +27,15 @@ find_package(GLEW CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
+# ---- Dear ImGui (via FetchContent) ----
+include(FetchContent)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.91.8
+)
+FetchContent_MakeAvailable(imgui)
+
 # ---- Engine library ----
 add_library(engine STATIC
     engine/src/engine.cpp
@@ -47,8 +56,18 @@ target_link_libraries(engine PUBLIC
 add_executable(editor
     editor/src/main.cpp
     editor/src/editor.cpp
+    
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 target_include_directories(editor PRIVATE
     editor/include
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(editor PRIVATE engine)

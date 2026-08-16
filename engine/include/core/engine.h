@@ -3,6 +3,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
@@ -13,6 +14,9 @@ namespace CoreEngine {
         float x, y, z;
         Vector3() : x(0), y(0), z(0) {}
         Vector3(float xx, float yy, float zz) : x(xx), y(yy), z(zz) {}
+        Vector3(glm::vec3 v) : x(v.x), y(v.y), z(v.z) {}
+        Vector3 operator-(const Vector3& other) const { return Vector3(x - other.x, y - other.y, z - other.z); }
+        Vector3 operator+(const Vector3& other) const { return Vector3(x + other.x, y + other.y, z + other.z); }
     };
 
     struct EngineInfo {
@@ -55,6 +59,8 @@ namespace CoreEngine {
 
     // Scene object — placed by editor
     struct SceneObject {
+        uint32_t id = 0;
+        std::string name;
         PrimitiveMesh mesh;
         Vector3 position  = {0, 0, 0};
         Vector3 rotation  = {0, 0, 0};   // Euler radians
@@ -96,12 +102,21 @@ namespace CoreEngine {
     std::vector<SceneObject>& GetSceneObjects();
     SceneObject& AddToScene(const std::string& name, const PrimitiveMesh& mesh);
     void ClearScene();
+    void RemoveFromScene(uint32_t id);
+    void SelectObject(uint32_t id);
+    SceneObject* GetSelectedObject();
+    uint32_t GetSelectedObjectId();
+    uint32_t GetNextSceneObjectId();
 
-    // Camera (FPS-style)
+    // Camera (orbit-style)
     void SetCameraPosition(Vector3 pos);
+    void SetCameraTarget(Vector3 target);
     void SetCameraDirection(Vector3 dir);
     Vector3 GetCameraPosition();
+    Vector3 GetCameraTarget();
     Vector3 GetCameraDirection();
+    Vector3 GetCameraOffset();
+    void SetCameraOffset(Vector3 offset);
     glm::mat4 GetProjectionMatrix(float fov, float aspect);
     GLuint GetModelUniformLocation(GLuint prog, bool& found);
 

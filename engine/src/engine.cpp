@@ -55,10 +55,13 @@ static GLuint      s_vao        = 0;
 static GLuint      s_vbo        = 0;
 
 static CoreEngine::Vector3 s_cameraPos    = {0, 1.5f, 5};
-static CoreEngine::Vector3 s_cameraDir    = {0, -1, -5};
+static CoreEngine::Vector3 s_cameraTarget = {0, 0, 0};
+static CoreEngine::Vector3 s_cameraOffset = {0, -1.5f, -5};
 
 static std::vector<CoreEngine::SceneObject> s_sceneObjects;
 static std::vector<CoreEngine::PrimitiveMesh> s_primitiveMeshes;
+static uint32_t s_nextSceneObjectId = 1;
+static uint32_t s_selectedObjectId = 0;
 
 static bool s_engineInited = false;
 
@@ -73,7 +76,7 @@ static void compileDefaultShader() {
     // Set initial camera uniforms
     auto view = glm::lookAt(
         glm::vec3(s_cameraPos.x, s_cameraPos.y, s_cameraPos.z),
-        glm::vec3(s_cameraPos.x + s_cameraDir.x, s_cameraPos.y + s_cameraDir.y, s_cameraPos.z + s_cameraDir.z),
+        glm::vec3(s_cameraTarget.x, s_cameraTarget.y, s_cameraTarget.z),
         glm::vec3(0, 1, 0));
     GLint viewLoc = glGetUniformLocation(s_shaderProg, "uView");
     if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
@@ -280,6 +283,9 @@ bool InitRenderer(const char* title, int width, int height) {
 
     compileDefaultShader();
     buildPrimitiveVAOs();
+
+    // Initialize offset from default camera position to target
+    s_cameraOffset = s_cameraPos - s_cameraTarget;
 
     glfwShowWindow(s_window);
     return true;
@@ -492,20 +498,64 @@ std::vector<SceneObject>& GetSceneObjects() { return s_sceneObjects; }
 
 SceneObject& AddToScene(const std::string& name, const PrimitiveMesh& mesh) {
     SceneObject obj;
+    obj.id = s_nextSceneObjectId++;
+    obj.name = name;
     obj.mesh = mesh;
     obj.mesh.name = name;
     s_sceneObjects.push_back(obj);
     return s_sceneObjects.back();
 }
 
-void ClearScene() { s_sceneObjects.clear(); }
+void ClearScene() { 
+    s_selectedObjectId = 0;
+    s_sceneObjects.clear(); 
+}
+
+void RemoveFromScene(uint32_t id) {
+    for (auto it = s_sceneObjects.begin(); it != s_sceneObjects.end(); ++it) {
+        if (it->id == id) {
+            if (it->mesh.VAO) glDeleteVertexArrays(1, &it->mesh.VAO);
+            if (it->mesh.VBO) glDeleteBuffers(1, &it->mesh.VBO);
+            if (it->mesh.EBO) glDeleteBuffers(1, &it->mesh.EBO);
+            if (s_selectedObjectId == id) s_selectedObjectId = 0;
+            s_sceneObjects.erase(it);
+            return;
+        }
+    }
+}
+
+void SelectObject(uint32_t id) { s_selectedObjectId = id; }
+
+SceneObject* GetSelectedObject() {
+    for (auto& obj : s_sceneObjects) {
+        if (obj.id == s_selectedObjectId) return &obj;
+    }
+    return nullptr;
+}
+
+uint32_t GetSelectedObjectId() { return s_selectedObjectId; }
+
+uint32_t GetNextSceneObjectId() { return s_nextSceneObjectId; }
 
 // ── Camera ──────────────────────────────────────────────────────────
 
-void SetCameraPosition(Vector3 pos) { s_cameraPos = pos; }
-void SetCameraDirection(Vector3 dir) { s_cameraDir = dir; }
+void SetCameraPosition(Vector3 pos) {
+    s_cameraPos = pos;
+    s_cameraOffset = s_cameraPos - s_cameraTarget;
+}
+void SetCameraTarget(Vector3 target) {
+    s_cameraTarget = target;
+    s_cameraOffset = s_cameraPos - s_cameraTarget;
+}
+void SetCameraDirection(Vector3 dir) { s_cameraOffset = dir; }
 Vector3 GetCameraPosition() { return s_cameraPos; }
-Vector3 GetCameraDirection() { return s_cameraDir; }
+Vector3 GetCameraTarget() { return s_cameraTarget; }
+Vector3 GetCameraDirection() { return s_cameraOffset; }
+Vector3 GetCameraOffset() { return s_cameraOffset; }
+void SetCameraOffset(Vector3 offset) {
+    s_cameraOffset = offset;
+    s_cameraPos = s_cameraTarget + offset;
+}
 
 glm::mat4 GetProjectionMatrix(float fov, float aspect) {
     return glm::perspective(glm::radians(fov), aspect, 0.1f, 100.0f);

@@ -13,5 +13,6 @@ namespace Editor {
     bool IsRunning(GLFWwindow* window);
     void RenderFrame(GLFWwindow* window);
     void PollEvents(GLFWwindow* window);
+    void RenderImGui(GLFWwindow* window);
 
 }  // namespace Editor
