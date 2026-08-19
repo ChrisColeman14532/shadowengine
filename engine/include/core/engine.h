@@ -4,6 +4,7 @@
 #include <GLFW/glfw3.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
@@ -57,11 +58,17 @@ namespace CoreEngine {
         std::vector<RawMeshData> rawMeshes;
     };
 
+    // Shared GPU mesh handle. When the last reference is dropped, the
+    // VAO/VBO/EBO are deleted. Scene objects and primitive templates
+    // can safely share the same GPU mesh.
+    using MeshPtr = std::shared_ptr<PrimitiveMesh>;
+    MeshPtr CreateMesh(PrimitiveMesh mesh);
+
     // Scene object — placed by editor
     struct SceneObject {
         uint32_t id = 0;
         std::string name;
-        PrimitiveMesh mesh;
+        MeshPtr mesh;
         Vector3 position  = {0, 0, 0};
         Vector3 rotation  = {0, 0, 0};   // Euler radians
         Vector3 scale     = {1, 1, 1};
@@ -100,7 +107,7 @@ namespace CoreEngine {
 
     // Scene management
     std::vector<SceneObject>& GetSceneObjects();
-    SceneObject& AddToScene(const std::string& name, const PrimitiveMesh& mesh);
+    SceneObject& AddToScene(const std::string& name, MeshPtr mesh);
     void ClearScene();
     void RemoveFromScene(uint32_t id);
     void SelectObject(uint32_t id);
@@ -122,9 +129,6 @@ namespace CoreEngine {
 
     // Internal helpers (used by editor)
     GLuint GetShaderProgram();
-    PrimitiveMesh* GetPrimitiveMesh(const char* name);
-
-    // Scene mesh builder — rebuilds scene VAOs from primitive templates
-    void RebuildSceneMeshes();
+    MeshPtr GetPrimitiveMesh(const char* name);
 
 } // namespace CoreEngine

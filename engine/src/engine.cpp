@@ -59,7 +59,7 @@ static CoreEngine::Vector3 s_cameraTarget = {0, 0, 0};
 static CoreEngine::Vector3 s_cameraOffset = {0, -1.5f, -5};
 
 static std::vector<CoreEngine::SceneObject> s_sceneObjects;
-static std::vector<CoreEngine::PrimitiveMesh> s_primitiveMeshes;
+static std::vector<std::shared_ptr<CoreEngine::PrimitiveMesh>> s_primitiveMeshes;
 static uint32_t s_nextSceneObjectId = 1;
 static uint32_t s_selectedObjectId = 0;
 
@@ -68,8 +68,6 @@ static bool s_engineInited = false;
 // ── Helpers ─────────────────────────────────────────────────────────
 
 static void compileDefaultShader() {
-    GLuint vs = CoreEngine::CompileShader(GL_VERTEX_SHADER, default_vs);
-    GLuint fs = CoreEngine::CompileShader(GL_FRAGMENT_SHADER, default_fs);
     s_shaderProg = CoreEngine::CreateShaderProgram(default_vs, default_fs);
     glUseProgram(s_shaderProg);
 
@@ -83,12 +81,7 @@ static void compileDefaultShader() {
 }
 
 static void buildPrimitiveVAOs() {
-    // Clear any existing primitive mesh VAOs
-    for (auto& m : s_primitiveMeshes) {
-        if (m.VAO) { glDeleteVertexArrays(1, &m.VAO); m.VAO = 0; }
-        if (m.VBO) { glDeleteBuffers(1, &m.VBO); m.VBO = 0; }
-        if (m.EBO) { glDeleteBuffers(1, &m.EBO); m.EBO = 0; }
-    }
+    // Drop template refs; GPU handles are freed when the last ref goes away
     s_primitiveMeshes.clear();
 
     // Build cube mesh data manually (not via CreateBox which is in namespace)
@@ -160,7 +153,7 @@ static void buildPrimitiveVAOs() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-    s_primitiveMeshes.push_back(cube);
+    s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
 
     // Build plane mesh
     CoreEngine::PrimitiveMesh plane;
@@ -192,7 +185,7 @@ static void buildPrimitiveVAOs() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-    s_primitiveMeshes.push_back(plane);
+    s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(plane)));
 }
 
 // ── Engine ──────────────────────────────────────────────────────────
@@ -219,11 +212,10 @@ void Shutdown() {
     glDeleteBuffers(1, &s_vbo);
     if (s_shaderProg) glDeleteProgram(s_shaderProg);
 
-    for (auto& m : s_primitiveMeshes) {
-        if (m.VAO) glDeleteVertexArrays(1, &m.VAO);
-        if (m.VBO) glDeleteBuffers(1, &m.VBO);
-        if (m.EBO) glDeleteBuffers(1, &m.EBO);
-    }
+    // Release GPU meshes while the GL context is still alive;
+    // shared refs (scene objects, templates) free their VAOs/VBOs/EBOs here
+    s_sceneObjects.clear();
+    s_primitiveMeshes.clear();
 
     if (s_window) glfwDestroyWindow(s_window);
     s_window = nullptr;
@@ -372,6 +364,15 @@ void SetUniformVec3(GLuint program, const char* name, const glm::vec3& v) {
 
 // ── Mesh primitives ─────────────────────────────────────────────────
 
+MeshPtr CreateMesh(PrimitiveMesh mesh) {
+    return MeshPtr(new PrimitiveMesh(std::move(mesh)), [](PrimitiveMesh* m) {
+        if (m->VAO) glDeleteVertexArrays(1, &m->VAO);
+        if (m->VBO) glDeleteBuffers(1, &m->VBO);
+        if (m->EBO) glDeleteBuffers(1, &m->EBO);
+        delete m;
+    });
+}
+
 void InitPrimitiveMeshes() {
     buildPrimitiveVAOs();
 }
@@ -496,27 +497,23 @@ void DestroyMesh(PrimitiveMesh& mesh) {
 
 std::vector<SceneObject>& GetSceneObjects() { return s_sceneObjects; }
 
-SceneObject& AddToScene(const std::string& name, const PrimitiveMesh& mesh) {
+SceneObject& AddToScene(const std::string& name, MeshPtr mesh) {
     SceneObject obj;
     obj.id = s_nextSceneObjectId++;
     obj.name = name;
-    obj.mesh = mesh;
-    obj.mesh.name = name;
-    s_sceneObjects.push_back(obj);
+    obj.mesh = std::move(mesh);
+    s_sceneObjects.push_back(std::move(obj));
     return s_sceneObjects.back();
 }
 
-void ClearScene() { 
+void ClearScene() {
     s_selectedObjectId = 0;
-    s_sceneObjects.clear(); 
+    s_sceneObjects.clear();
 }
 
 void RemoveFromScene(uint32_t id) {
     for (auto it = s_sceneObjects.begin(); it != s_sceneObjects.end(); ++it) {
         if (it->id == id) {
-            if (it->mesh.VAO) glDeleteVertexArrays(1, &it->mesh.VAO);
-            if (it->mesh.VBO) glDeleteBuffers(1, &it->mesh.VBO);
-            if (it->mesh.EBO) glDeleteBuffers(1, &it->mesh.EBO);
             if (s_selectedObjectId == id) s_selectedObjectId = 0;
             s_sceneObjects.erase(it);
             return;
@@ -569,22 +566,11 @@ GLuint GetModelUniformLocation(GLuint prog, bool& found) {
 
 GLuint GetShaderProgram() { return s_shaderProg; }
 
-PrimitiveMesh* GetPrimitiveMesh(const char* name) {
-    for (auto& m : s_primitiveMeshes) {
-        if (m.name == name) return &m;
+MeshPtr GetPrimitiveMesh(const char* name) {
+    for (const auto& m : s_primitiveMeshes) {
+        if (m->name == name) return m;
     }
     return nullptr;
-}
-
-void RebuildSceneMeshes() {
-    for (auto& obj : s_sceneObjects) {
-        // Reset the scene object's mesh and re-copy from primitive template
-        if (obj.mesh.VAO) { glDeleteVertexArrays(1, &obj.mesh.VAO); obj.mesh.VAO = 0; }
-        if (obj.mesh.VBO) { glDeleteBuffers(1, &obj.mesh.VBO); obj.mesh.VBO = 0; }
-        if (obj.mesh.EBO) { glDeleteBuffers(1, &obj.mesh.EBO); obj.mesh.EBO = 0; }
-        obj.mesh.indexCount = 0;
-    }
-    s_sceneObjects.clear();
 }
 
 } // namespace CoreEngine

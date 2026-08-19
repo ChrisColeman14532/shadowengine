@@ -67,13 +67,12 @@ namespace Editor {
 
         CoreEngine::ClearScene();
 
-        CoreEngine::AddToScene("ground", *CoreEngine::GetPrimitiveMesh("plane"));
+        CoreEngine::AddToScene("ground", CoreEngine::GetPrimitiveMesh("plane"));
         auto& ground = CoreEngine::GetSceneObjects().back();
         ground.position = {0, -2.0f, 0};
         ground.scale = {10, 1, 10};
 
-        CoreEngine::PrimitiveMesh merged = AssetLoader::MergeFromModel(model);
-        CoreEngine::AddToScene("loaded_model", merged);
+        CoreEngine::AddToScene("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)));
 
         float maxX = fmaxf(modelExtent.x, modelExtent.y);
         float maxDim = fmaxf(maxX, modelExtent.z);
@@ -100,18 +99,18 @@ namespace Editor {
         ImGui::SetNextWindowSize(panelSize);
         if (ImGui::Begin("Scene Hierarchy", nullptr)) {
             if (ImGui::Button("Add Cube", ImVec2(-1, 0))) {
-                auto* mesh = CoreEngine::GetPrimitiveMesh("cube");
+                auto mesh = CoreEngine::GetPrimitiveMesh("cube");
                 if (mesh) {
-                    auto& obj = CoreEngine::AddToScene("cube_" + std::to_string(CoreEngine::GetNextSceneObjectId()), *mesh);
+                    auto& obj = CoreEngine::AddToScene("cube_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh);
                     obj.position = {0, 0.5f, 0};
                     obj.scale = {1, 1, 1};
                 }
             }
             ImGui::SameLine();
             if (ImGui::Button("Add Plane", ImVec2(-1, 0))) {
-                auto* mesh = CoreEngine::GetPrimitiveMesh("plane");
+                auto mesh = CoreEngine::GetPrimitiveMesh("plane");
                 if (mesh) {
-                    auto& obj = CoreEngine::AddToScene("plane_" + std::to_string(CoreEngine::GetNextSceneObjectId()), *mesh);
+                    auto& obj = CoreEngine::AddToScene("plane_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh);
                     obj.position = {0, -1.0f, 0};
                     obj.scale = {10, 1, 10};
                 }
@@ -235,9 +234,13 @@ namespace Editor {
                 ImGui::PopID();
                 ImGui::Separator();
 
-                ImGui::Text("Mesh: %s", selected->mesh.name.c_str());
-                ImGui::Text("Indices: %d", selected->mesh.indexCount);
-                ImGui::Text("VAO: %u", selected->mesh.VAO);
+                if (selected->mesh) {
+                    ImGui::Text("Mesh: %s", selected->mesh->name.c_str());
+                    ImGui::Text("Indices: %d", selected->mesh->indexCount);
+                    ImGui::Text("VAO: %u", selected->mesh->VAO);
+                } else {
+                    ImGui::Text("Mesh: (none)");
+                }
 
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
@@ -436,9 +439,9 @@ namespace Editor {
             if (obj.name == "ground") { hasGround = true; break; }
         }
         if (!hasGround) {
-            auto* planeMesh = CoreEngine::GetPrimitiveMesh("plane");
+            auto planeMesh = CoreEngine::GetPrimitiveMesh("plane");
             if (planeMesh) {
-                CoreEngine::AddToScene("ground", *planeMesh);
+                CoreEngine::AddToScene("ground", planeMesh);
                 auto& plane = CoreEngine::GetSceneObjects().back();
                 plane.position = {0, -1.0f, 0};
                 plane.scale = {10, 1, 10};
@@ -496,7 +499,7 @@ namespace Editor {
 
         for (auto& obj : sceneObjs) {
             auto& mesh = obj.mesh;
-            if (!mesh.VAO || mesh.indexCount == 0) continue;
+            if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
@@ -511,9 +514,9 @@ namespace Editor {
                             0.4f + obj.position.z * 0.05f);
             CoreEngine::SetUniformVec3(prog, "uColor", color);
 
-            glBindVertexArray(mesh.VAO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
-            glDrawElements(GL_TRIANGLES, mesh.indexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(mesh->VAO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
+            glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
         }
