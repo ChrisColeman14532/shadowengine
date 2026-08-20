@@ -65,7 +65,7 @@ namespace Editor {
         int w = 1280, h = 720;
         glfwGetFramebufferSize(win, &w, &h);
 
-        CoreEngine::ClearScene();
+        CoreEngine::ClearSceneWithMaterials();
 
         auto groundMesh = CoreEngine::GetPrimitiveMesh("plane");
         auto groundMat = CoreEngine::CreateDefaultMaterial();
@@ -174,7 +174,7 @@ namespace Editor {
 
             ImGui::Separator();
             if (ImGui::Button("Clear Scene", ImVec2(-1, 0))) {
-                CoreEngine::ClearScene();
+                CoreEngine::ClearSceneWithMaterials();
                 CoreEngine::GetSceneObjectsWithMaterials().clear();
             }
         }
@@ -327,7 +327,7 @@ namespace Editor {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
                 if (ImGui::Button("Delete Object", ImVec2(-1, 0))) {
-                    CoreEngine::RemoveFromScene(selected->id);
+                    CoreEngine::RemoveFromSceneWithMaterials(selected->id);
                     // Clean up texture if loaded
                     if (selected->material.diffuseTexture) {
                         CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
@@ -506,7 +506,7 @@ namespace Editor {
     }
 
     void ShutDown(GLFWwindow* window) {
-        CoreEngine::ClearScene();
+        CoreEngine::ClearSceneWithMaterials();
         ShutdownImGui();
     }
 
@@ -583,9 +583,6 @@ namespace Editor {
                          cameraTarget.z + (float)CoreEngine::GetCameraOffset().z);
         glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
         glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
-
-        // Draw scene with materials
-        CoreEngine::RenderSceneWithMaterials();
 
         // Draw grid on the ground
         CoreEngine::DrawGrid(20, 1.0f, 10.0f);

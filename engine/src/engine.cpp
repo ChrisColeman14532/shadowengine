@@ -213,6 +213,9 @@ static uint32_t s_selectedObjectId = 0;
 
 static bool s_engineInited = false;
 
+// Material-based scene objects
+static std::vector<CoreEngine::SceneObjectWithMaterial> s_sceneObjectsWithMat;
+
 // Skybox state
 static GLuint s_skyboxVBO = 0;
 static GLuint s_skyboxVAO = 0;
@@ -663,6 +666,12 @@ SceneObject& AddToScene(const std::string& name, MeshPtr mesh) {
 void ClearScene() {
     s_selectedObjectId = 0;
     s_sceneObjects.clear();
+    s_sceneObjectsWithMat.clear();
+}
+
+void ClearSceneWithMaterials() {
+    s_selectedObjectId = 0;
+    s_sceneObjectsWithMat.clear();
 }
 
 void RemoveFromScene(uint32_t id) {
@@ -670,6 +679,16 @@ void RemoveFromScene(uint32_t id) {
         if (it->id == id) {
             if (s_selectedObjectId == id) s_selectedObjectId = 0;
             s_sceneObjects.erase(it);
+            return;
+        }
+    }
+}
+
+void RemoveFromSceneWithMaterials(uint32_t id) {
+    for (auto it = s_sceneObjectsWithMat.begin(); it != s_sceneObjectsWithMat.end(); ++it) {
+        if (it->id == id) {
+            if (s_selectedObjectId == id) s_selectedObjectId = 0;
+            s_sceneObjectsWithMat.erase(it);
             return;
         }
     }
@@ -1159,98 +1178,16 @@ Material CoreEngine::CreateDefaultMaterial() {
 
 // ── Static state for material-based scene ───────────────────────────
 
-static std::vector<SceneObjectWithMaterial> s_sceneObjectsWithMat;
 static GLuint s_materialShaderProg = 0;
 static bool s_materialShaderInited = false;
 
-// ── Render scene with materials ─────────────────────────────────────
+// ── Get scene objects with materials ───────────────────────────────
 
-void CoreEngine::RenderSceneWithMaterials() {
-    // Init material shader on first call
-    if (!s_materialShaderInited) {
-        s_materialShaderProg = CoreEngine::CreateShaderProgram(material_vs, material_fs);
-        s_materialShaderInited = true;
-    }
-
-    // Get camera and projection
-    auto camPos = s_cameraPos;
-    auto camTarget = s_cameraTarget;
-    glm::mat4 view = glm::lookAt(
-        glm::vec3(camPos.x, camPos.y, camPos.z),
-        glm::vec3(camTarget.x, camTarget.y, camTarget.z),
-        glm::vec3(0, 1, 0));
-
-    int w = 1280, h = 720;
-    GLFWwindow* win = s_window;
-    if (win) glfwGetFramebufferSize(win, &w, &h);
-    glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f);
-
-    glUseProgram(s_materialShaderProg);
-    GLint viewLoc = glGetUniformLocation(s_materialShaderProg, "uView");
-    GLint projLoc = glGetUniformLocation(s_materialShaderProg, "uProjection");
-    if (viewLoc != -1) CoreEngine::SetUniformMat4(s_materialShaderProg, "uView", view);
-    if (projLoc != -1) CoreEngine::SetUniformMat4(s_materialShaderProg, "uProjection", projection);
-
-    // Set default material values (will be overwritten per-object if material is used)
-    CoreEngine::SetUniformVec3(s_materialShaderProg, "uBaseColor", glm::vec3(0.5f));
-    CoreEngine::SetUniformVec3(s_materialShaderProg, "uEmissiveColor", glm::vec3(0.0f));
-    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uMetallic"), 0.0f);
-    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uRoughness"), 1.0f);
-    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uAO"), 1.0f);
-    glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasDiffuse"), 0);
-    glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasNormal"), 0);
-
-    for (auto& obj : s_sceneObjectsWithMat) {
-        auto& mesh = obj.mesh;
-        if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
-
-        // Build model matrix
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
-        model = glm::rotate(model, (float)obj.rotation.x, glm::vec3(1, 0, 0));
-        model = glm::rotate(model, (float)obj.rotation.y, glm::vec3(0, 1, 0));
-        model = glm::rotate(model, (float)obj.rotation.z, glm::vec3(0, 0, 1));
-        model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
-
-        CoreEngine::SetUniformMat4(s_materialShaderProg, "uModel", model);
-
-        // Bind texture if material uses one
-        int hasDiffuse = 0, hasNormal = 0;
-        if (obj.material.useMaterial && obj.material.diffuseTexture && obj.material.diffuseTexture->id) {
-            BindTexture(*obj.material.diffuseTexture, 0);
-            hasDiffuse = 1;
-        }
-        glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasDiffuse"), hasDiffuse);
-
-        if (obj.material.useMaterial && obj.material.normalTexture && obj.material.normalTexture->id) {
-            BindTexture(*obj.material.normalTexture, 1);
-            hasNormal = 1;
-        }
-        glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasNormal"), hasNormal);
-
-        // Set material uniforms
-        glUniform3fv(glGetUniformLocation(s_materialShaderProg, "uBaseColor"), 1, glm::value_ptr(obj.material.baseColor));
-        glUniform3fv(glGetUniformLocation(s_materialShaderProg, "uEmissiveColor"), 1, glm::value_ptr(obj.material.emissiveColor));
-        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uMetallic"), obj.material.metallic);
-        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uRoughness"), obj.material.roughness);
-        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uAO"), obj.material.ao);
-
-        // Draw
-        glBindVertexArray(mesh->VAO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
-        glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-
-    glUseProgram(s_shaderProg);
-}
-
-std::vector<SceneObjectWithMaterial>& CoreEngine::GetSceneObjectsWithMaterials() {
+std::vector<CoreEngine::SceneObjectWithMaterial>& GetSceneObjectsWithMaterials() {
     return s_sceneObjectsWithMat;
 }
 
-SceneObjectWithMaterial& CoreEngine::AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat) {
+CoreEngine::SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat) {
     SceneObjectWithMaterial obj;
     obj.id = s_nextSceneObjectId++;
     obj.name = name;

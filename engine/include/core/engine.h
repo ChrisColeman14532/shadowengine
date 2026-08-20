@@ -109,7 +109,9 @@ namespace CoreEngine {
     std::vector<SceneObject>& GetSceneObjects();
     SceneObject& AddToScene(const std::string& name, MeshPtr mesh);
     void ClearScene();
+    void ClearSceneWithMaterials();
     void RemoveFromScene(uint32_t id);
+    void RemoveFromSceneWithMaterials(uint32_t id);
     void SelectObject(uint32_t id);
     SceneObject* GetSelectedObject();
     uint32_t GetSelectedObjectId();
@@ -177,7 +179,6 @@ namespace CoreEngine {
     std::vector<SceneObjectWithMaterial>& GetSceneObjectsWithMaterials();
     SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat);
 
-    // ── Render with materials ───────────────────────────────────────
-    void RenderSceneWithMaterials();
+
 
 } // namespace CoreEngine
