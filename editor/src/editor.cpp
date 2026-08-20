@@ -270,11 +270,11 @@ namespace Editor {
             ImGuiWindowFlags_NoInputs)) {
             auto& scene = CoreEngine::GetSceneObjects();
             char fpsText[128];
-            snprintf(fpsText, sizeof(fpsText), "ShadowEngine v2.0 | Objects: %d | FPS: %.1f",
+            snprintf(fpsText, sizeof(fpsText), "ShadowEngine v0.2 | Objects: %d | FPS: %.1f",
                 (int)scene.size(), ImGui::GetIO().Framerate);
             ImGui::Text(fpsText);
             ImGui::SameLine(ImGui::GetWindowWidth() - 200);
-            ImGui::Text("L - Load FBX | W/A/S/D - Rotate selected");
+            ImGui::Text("L - Load FBX | W/A/S/D - Rotate selected | Mouse drag - Orbit");
         }
         ImGui::End();
     }
@@ -481,9 +481,9 @@ namespace Editor {
         }
 
         // Compute camera position from target + offset
-        glm::vec3 camPos(cameraTarget.x - (float)CoreEngine::GetCameraOffset().x,
-                         cameraTarget.y - (float)CoreEngine::GetCameraOffset().y,
-                         cameraTarget.z - (float)CoreEngine::GetCameraOffset().z);
+        glm::vec3 camPos(cameraTarget.x + (float)CoreEngine::GetCameraOffset().x,
+                         cameraTarget.y + (float)CoreEngine::GetCameraOffset().y,
+                         cameraTarget.z + (float)CoreEngine::GetCameraOffset().z);
         glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
         glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
 
@@ -520,6 +520,12 @@ namespace Editor {
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
         }
+
+        // Draw grid on the ground
+        CoreEngine::DrawGrid(20, 1.0f, 10.0f);
+
+        // Draw selected object bounds wireframe
+        CoreEngine::DrawSelectedObjectBounds();
 
         RenderImGui(window);
         CoreEngine::RenderEnd();

@@ -75,8 +75,8 @@ namespace CoreEngine {
     };
 
     static constexpr const char* ENGINE_NAME   = "ShadowEngine";
-    static constexpr int         VERSION_MAJOR   = 2;
-    static constexpr int         VERSION_MINOR   = 0;
+    static constexpr int         VERSION_MAJOR   = 0;
+    static constexpr int         VERSION_MINOR   = 2;
 
     // Lifecycle
     void Init();
@@ -130,5 +130,11 @@ namespace CoreEngine {
     // Internal helpers (used by editor)
     GLuint GetShaderProgram();
     MeshPtr GetPrimitiveMesh(const char* name);
+
+    // 3D grid rendering
+    void DrawGrid(int divisions = 20, float unit = 1.0f, float halfExtent = 10.0f);
+
+    // Bounding box wireframe for selected object
+    void DrawSelectedObjectBounds();
 
 } // namespace CoreEngine

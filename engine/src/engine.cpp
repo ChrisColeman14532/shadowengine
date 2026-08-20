@@ -573,4 +573,260 @@ MeshPtr GetPrimitiveMesh(const char* name) {
     return nullptr;
 }
 
+// ── 3D Grid ─────────────────────────────────────────────────────────
+
+void DrawGrid(int divisions, float unit, float halfExtent) {
+    const float step = halfExtent * 2.0f / divisions;
+    const float half = divisions * step / 2.0f;
+    const int lineCount = (divisions + 1) * 2;
+
+    static std::vector<float> gridVerts;
+    static std::vector<float> gridColors;
+    static GLuint gridVBO = 0;
+    static GLuint gridVAO = 0;
+    static int cachedDivisions = 0;
+
+    if (gridVAO == 0 || cachedDivisions != divisions) {
+        gridVerts.clear();
+        gridColors.clear();
+
+        for (int i = 0; i <= divisions; ++i) {
+            float pos = -half + i * step;
+            bool isMajor = (i % (divisions / 10)) == 0;
+            float color0 = isMajor ? 0.5f : 0.3f;
+            float color1 = isMajor ? 0.5f : 0.3f;
+            float color2 = isMajor ? 0.5f : 0.3f;
+
+            // X-direction lines
+            gridVerts.push_back(-halfExtent); gridVerts.push_back(0.0f); gridVerts.push_back(pos);
+            gridVerts.push_back( halfExtent); gridVerts.push_back(0.0f); gridVerts.push_back(pos);
+            gridColors.push_back(color0); gridColors.push_back(color1); gridColors.push_back(color2);
+            gridColors.push_back(color0); gridColors.push_back(color1); gridColors.push_back(color2);
+
+            // Z-direction lines
+            gridVerts.push_back(pos); gridVerts.push_back(0.0f); gridVerts.push_back(-halfExtent);
+            gridVerts.push_back(pos); gridVerts.push_back(0.0f); gridVerts.push_back( halfExtent);
+            gridColors.push_back(color0); gridColors.push_back(color1); gridColors.push_back(color2);
+            gridColors.push_back(color0); gridColors.push_back(color1); gridColors.push_back(color2);
+        }
+
+        if (gridVAO) glDeleteVertexArrays(1, &gridVAO);
+        if (gridVBO) glDeleteBuffers(1, &gridVBO);
+        if (gridColors.size() > 2) {
+            glGenVertexArrays(1, &gridVAO);
+            glGenBuffers(1, &gridVBO);
+            glBindVertexArray(gridVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, gridVBO);
+            glBufferData(GL_ARRAY_BUFFER,
+                gridVerts.size() * sizeof(float) + gridColors.size() * sizeof(float),
+                nullptr, GL_STATIC_DRAW);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, gridVerts.size() * sizeof(float), gridVerts.data());
+            glBufferSubData(GL_ARRAY_BUFFER, gridVerts.size() * sizeof(float), gridColors.size() * sizeof(float), gridColors.data());
+
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)0);
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)(sizeof(float) * 3));
+            glBindVertexArray(0);
+        }
+        cachedDivisions = divisions;
+    }
+
+    if (gridVAO) {
+        // Use a simple color shader for the grid
+        static GLuint gridShaderProg = 0;
+        static bool gridShaderInited = false;
+
+        if (!gridShaderInited) {
+            const char* g_vs = R"(
+                #version 330 core
+                layout(location = 0) in vec3 aPos;
+                layout(location = 3) in vec3 aColor;
+                uniform mat4 uModel;
+                uniform mat4 uView;
+                uniform mat4 uProjection;
+                out vec3 vColor;
+                void main() {
+                    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
+                    vColor = aColor;
+                }
+            )";
+            const char* g_fs = R"(
+                #version 330 core
+                in vec3 vColor;
+                out vec4 FragColor;
+                void main() {
+                    FragColor = vec4(vColor, 1.0);
+                }
+            )";
+            gridShaderProg = CoreEngine::CreateShaderProgram(g_vs, g_fs);
+            gridShaderInited = true;
+        }
+
+        CoreEngine::UseShader(gridShaderProg);
+        GLint viewLoc = glGetUniformLocation(gridShaderProg, "uView");
+        GLint projLoc = glGetUniformLocation(gridShaderProg, "uProjection");
+        GLint modelLoc = glGetUniformLocation(gridShaderProg, "uModel");
+
+        auto camPos = s_cameraPos;
+        auto camTarget = s_cameraTarget;
+        auto view = glm::lookAt(
+            glm::vec3(camPos.x, camPos.y, camPos.z),
+            glm::vec3(camTarget.x, camTarget.y, camTarget.z),
+            glm::vec3(0, 1, 0));
+        if (viewLoc != -1) CoreEngine::SetUniformMat4(gridShaderProg, "uView", view);
+        if (projLoc != -1) {
+            int w = 1280, h = 720;
+            GLFWwindow* win = s_window;
+            if (win) glfwGetFramebufferSize(win, &w, &h);
+            CoreEngine::SetUniformMat4(gridShaderProg, "uProjection",
+                glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f));
+        }
+        if (modelLoc != -1) CoreEngine::SetUniformMat4(gridShaderProg, "uModel", glm::mat4(1.0f));
+
+        glLineWidth(1.0f);
+        glBindVertexArray(gridVAO);
+        glDisable(GL_DEPTH_TEST);
+        glDrawArrays(GL_LINES, 0, (divisions + 1) * 2 * 2);
+        glEnable(GL_DEPTH_TEST);
+        glBindVertexArray(0);
+
+        // Restore original shader
+        if (s_shaderProg) {
+            glUseProgram(s_shaderProg);
+        }
+    }
+}
+
+// ── Selected Object Bounds ──────────────────────────────────────────
+
+void DrawSelectedObjectBounds() {
+    SceneObject* sel = GetSelectedObject();
+    if (!sel || !sel->mesh || sel->mesh->indexCount == 0) return;
+
+    // Determine mesh extents based on mesh name
+    float extents[3];
+    if (sel->mesh->name == "cube") {
+        extents[0] = 0.5f; extents[1] = 0.5f; extents[2] = 0.5f;
+    } else if (sel->mesh->name == "plane") {
+        extents[0] = 5.0f; extents[1] = 0.01f; extents[2] = 5.0f;
+    } else {
+        extents[0] = 1.0f; extents[1] = 1.0f; extents[2] = 1.0f;
+    }
+
+    // Build model matrix from object transform
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, glm::vec3(sel->position.x, sel->position.y, sel->position.z));
+    model = glm::rotate(model, (float)sel->rotation.x, glm::vec3(1, 0, 0));
+    model = glm::rotate(model, (float)sel->rotation.y, glm::vec3(0, 1, 0));
+    model = glm::rotate(model, (float)sel->rotation.z, glm::vec3(0, 0, 1));
+    model = glm::scale(model, glm::vec3(sel->scale.x, sel->scale.y, sel->scale.z));
+
+    // Compute 8 corners of transformed bounding box
+    glm::vec3 boxMin(-extents[0], -extents[1], -extents[2]);
+    glm::vec3 boxMax(extents[0], extents[1], extents[2]);
+    
+    glm::vec3 corners[8] = {
+        model * glm::vec4(boxMin, 1.0f),
+        model * glm::vec4(boxMax.x, boxMin.y, boxMin.z, 1.0f),
+        model * glm::vec4(boxMax.x, boxMax.y, boxMin.z, 1.0f),
+        model * glm::vec4(boxMin.x, boxMax.y, boxMin.z, 1.0f),
+        model * glm::vec4(boxMin.x, boxMin.y, boxMax.z, 1.0f),
+        model * glm::vec4(boxMax.x, boxMin.y, boxMax.z, 1.0f),
+        model * glm::vec4(boxMax.x, boxMax.y, boxMax.z, 1.0f),
+        model * glm::vec4(boxMin.x, boxMax.y, boxMax.z, 1.0f),
+    };
+
+    // 12 edges (2 vertices per edge = 24 verts)
+    const int edgePairs[12][2] = {
+        {0,1}, {1,2}, {2,3}, {3,0}, // bottom
+        {4,5}, {5,6}, {6,7}, {7,4}, // top
+        {0,4}, {1,5}, {2,6}, {3,7}  // verticals
+    };
+
+    float edgeVerts[24 * 3];
+    for (int i = 0; i < 12; ++i) {
+        edgeVerts[(i*6+0)] = corners[edgePairs[i][0]].x;
+        edgeVerts[(i*6+1)] = corners[edgePairs[i][0]].y;
+        edgeVerts[(i*6+2)] = corners[edgePairs[i][0]].z;
+        edgeVerts[(i*6+3)] = corners[edgePairs[i][1]].x;
+        edgeVerts[(i*6+4)] = corners[edgePairs[i][1]].y;
+        edgeVerts[(i*6+5)] = corners[edgePairs[i][1]].z;
+    }
+
+    static GLuint boundsVBO = 0;
+    static GLuint boundsVAO = 0;
+    if (boundsVAO == 0) {
+        glGenVertexArrays(1, &boundsVAO);
+        glGenBuffers(1, &boundsVBO);
+        glBindVertexArray(boundsVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, boundsVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(edgeVerts), nullptr, GL_DYNAMIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void*)0);
+        glBindVertexArray(0);
+    }
+
+    // Update vertex data each frame (bounds change with selection)
+    glBindVertexArray(boundsVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, boundsVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(edgeVerts), edgeVerts);
+
+    // Use a yellow color shader for the bounds
+    static GLuint boundsShaderProg = 0;
+    static bool boundsShaderInited = false;
+    if (!boundsShaderInited) {
+        const char* b_vs = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            uniform mat4 uModel;
+            uniform mat4 uView;
+            uniform mat4 uProjection;
+            void main() {
+                gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
+            }
+        )";
+        const char* b_fs = R"(
+            #version 330 core
+            out vec4 FragColor;
+            void main() {
+                FragColor = vec4(1.0, 0.8, 0.0, 1.0);
+            }
+        )";
+        boundsShaderProg = CoreEngine::CreateShaderProgram(b_vs, b_fs);
+        boundsShaderInited = true;
+    }
+
+    CoreEngine::UseShader(boundsShaderProg);
+    GLint viewLoc = glGetUniformLocation(boundsShaderProg, "uView");
+    GLint projLoc = glGetUniformLocation(boundsShaderProg, "uProjection");
+    GLint modelLoc = glGetUniformLocation(boundsShaderProg, "uModel");
+
+    auto camPos = s_cameraPos;
+    auto camTarget = s_cameraTarget;
+    auto view = glm::lookAt(
+        glm::vec3(camPos.x, camPos.y, camPos.z),
+        glm::vec3(camTarget.x, camTarget.y, camTarget.z),
+        glm::vec3(0, 1, 0));
+    if (viewLoc != -1) CoreEngine::SetUniformMat4(boundsShaderProg, "uView", view);
+    if (projLoc != -1) {
+        int w = 1280, h = 720;
+        GLFWwindow* win = s_window;
+        if (win) glfwGetFramebufferSize(win, &w, &h);
+        CoreEngine::SetUniformMat4(boundsShaderProg, "uProjection",
+            glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f));
+    }
+    if (modelLoc != -1) CoreEngine::SetUniformMat4(boundsShaderProg, "uModel", glm::mat4(1.0f));
+
+    glLineWidth(2.0f);
+    glBindVertexArray(boundsVAO);
+    glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_LINES, 0, 24);
+    glEnable(GL_DEPTH_TEST);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    if (s_shaderProg) glUseProgram(s_shaderProg);
+}
+
 } // namespace CoreEngine
