@@ -137,4 +137,8 @@ namespace CoreEngine {
     // Bounding box wireframe for selected object
     void DrawSelectedObjectBounds();
 
+    // Skybox (procedural gradient with sun)
+    void InitSkybox();
+    void DrawSkybox();
+
 } // namespace CoreEngine

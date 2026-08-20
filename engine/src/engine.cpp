@@ -45,6 +45,82 @@ void main() {
 }
 )";
 
+// ── Skybox shader source ────────────────────────────────────────────
+
+static const char* skybox_vs = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 uView;
+uniform mat4 uProjection;
+
+out vec3 vDirection;
+
+void main() {
+    // Remove translation from view matrix (skybox doesn't move)
+    mat4 viewNoTranslate = uView;
+    viewNoTranslate[3] = vec4(0.0, 0.0, 0.0, 1.0);
+    
+    vDirection = aPos;
+    gl_Position = (uProjection * viewNoTranslate * vec4(aPos, 1.0)).xyww;
+}
+)";
+
+static const char* skybox_fs = R"(
+#version 330 core
+in vec3 vDirection;
+out vec4 FragColor;
+
+void main() {
+    vec3 dir = normalize(vDirection);
+    
+    // Sky gradient parameters
+    float sunAngle = 0.4; // sun position in radians from horizon
+    vec3 sunDir = normalize(vec3(0.8, sin(sunAngle), 0.6));
+    
+    // Sky colors
+    vec3 zenith = vec3(0.15, 0.3, 0.85);    // deep blue zenith
+    vec3 midday = vec3(0.4, 0.65, 0.95);    // light blue mid-sky
+    vec3 horizon = vec3(0.85, 0.65, 0.45);   // warm orange horizon
+    vec3 below = vec3(0.5, 0.35, 0.25);      // warm brown below
+    
+    float y = dir.y;
+    vec3 skyColor;
+    
+    if (y > 0.1) {
+        // Upper sky: blend from horizon to zenith
+        float t = smoothstep(0.1, 0.8, y);
+        skyColor = mix(horizon, zenith, t);
+        skyColor = mix(skyColor, midday, smoothstep(0.0, 0.4, y));
+    } else if (y > -0.05) {
+        // Horizon band
+        skyColor = horizon;
+    } else {
+        // Below horizon
+        skyColor = mix(horizon, below, smoothstep(-0.05, -0.5, y));
+    }
+    
+    // Sun disc
+    float sunDot = max(dot(dir, sunDir), 0.0);
+    float sun = pow(sunDot, 500.0) * 2.0;
+    float sunGlow = pow(sunDot, 20.0) * 0.6;
+    float sunHalo = pow(sunDot, 3.0) * 0.2;
+    
+    vec3 sunColor = vec3(1.0, 0.95, 0.8);
+    skyColor += sunColor * (sun + sunGlow + sunHalo);
+    
+    // Horizon glow
+    float horizonGlow = exp(-abs(y) * 4.0) * 0.3;
+    skyColor += vec3(1.0, 0.7, 0.4) * horizonGlow;
+    
+    // Atmospheric scattering near horizon
+    float horizonFactor = exp(-abs(y) * 3.0);
+    skyColor = mix(skyColor, horizon, horizonFactor * 0.4);
+    
+    FragColor = vec4(skyColor, 1.0);
+}
+)";
+
 // ── Static state ────────────────────────────────────────────────────
 
 static GLFWwindow* s_window     = nullptr;
@@ -64,6 +140,12 @@ static uint32_t s_nextSceneObjectId = 1;
 static uint32_t s_selectedObjectId = 0;
 
 static bool s_engineInited = false;
+
+// Skybox state
+static GLuint s_skyboxVBO = 0;
+static GLuint s_skyboxVAO = 0;
+static GLuint s_skyboxProg = 0;
+static bool   s_skyboxInited = false;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -827,6 +909,107 @@ void DrawSelectedObjectBounds() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     if (s_shaderProg) glUseProgram(s_shaderProg);
+}
+
+// ── Skybox ──────────────────────────────────────────────────────────
+
+void CoreEngine::InitSkybox() {
+    if (s_skyboxInited) return;
+
+    // Skybox is a cube (6 faces, 24 vertices, 36 indices)
+    const float cubeVerts[] = {
+        // Front face
+        -1.0f, -1.0f,  1.0f,
+         1.0f, -1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f,  1.0f,
+        // Back face
+        -1.0f, -1.0f, -1.0f,
+        -1.0f,  1.0f, -1.0f,
+         1.0f,  1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+        // Top face
+        -1.0f,  1.0f, -1.0f,
+        -1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f,  1.0f, -1.0f,
+        // Bottom face
+        -1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f, -1.0f,
+         1.0f, -1.0f,  1.0f,
+        -1.0f, -1.0f,  1.0f,
+        // Right face
+         1.0f, -1.0f, -1.0f,
+         1.0f,  1.0f, -1.0f,
+         1.0f,  1.0f,  1.0f,
+         1.0f, -1.0f,  1.0f,
+        // Left face
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f,  1.0f,
+        -1.0f,  1.0f,  1.0f,
+        -1.0f,  1.0f, -1.0f,
+    };
+
+    const GLuint cubeIndices[] = {
+        0,1,2, 0,2,3,       // front
+        4,5,6, 4,6,7,       // back
+        8,9,10, 8,10,11,    // top
+        12,13,14, 12,14,15, // bottom
+        16,17,18, 16,18,19, // right
+        20,21,22, 20,22,23  // left
+    };
+
+    glGenVertexArrays(1, &s_skyboxVAO);
+    glGenBuffers(1, &s_skyboxVBO);
+
+    glBindVertexArray(s_skyboxVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, s_skyboxVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void*)0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_skyboxVBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+    glBindVertexArray(0);
+
+    // Create skybox shader
+    s_skyboxProg = CoreEngine::CreateShaderProgram(skybox_vs, skybox_fs);
+
+    s_skyboxInited = true;
+}
+
+void CoreEngine::DrawSkybox() {
+    if (!s_skyboxInited || !s_window) return;
+
+    // Get camera position and projection
+    auto camPos = s_cameraPos;
+    auto camTarget = s_cameraTarget;
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(camPos.x, camPos.y, camPos.z),
+        glm::vec3(camTarget.x, camTarget.y, camTarget.z),
+        glm::vec3(0, 1, 0));
+
+    int w = 1280, h = 720;
+    glfwGetFramebufferSize(s_window, &w, &h);
+    glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f);
+
+    // Use skybox shader
+    glUseProgram(s_skyboxProg);
+    GLint viewLoc = glGetUniformLocation(s_skyboxProg, "uView");
+    GLint projLoc = glGetUniformLocation(s_skyboxProg, "uProjection");
+    if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+    if (projLoc != -1) glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+    // Draw skybox (disable depth write, use depth equal)
+    glBindVertexArray(s_skyboxVAO);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glDepthFunc(GL_LEQUAL);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    glEnable(GL_CULL_FACE);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glBindVertexArray(0);
+    glUseProgram(s_shaderProg);
 }
 
 } // namespace CoreEngine

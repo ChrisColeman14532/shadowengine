@@ -361,6 +361,9 @@ namespace Editor {
 
         InitImGui(CoreEngine::GetWindow());
 
+        // Initialize skybox
+        CoreEngine::InitSkybox();
+
         glfwSetInputMode(CoreEngine::GetWindow(), GLFW_REPEAT, GLFW_TRUE);
         glfwFocusWindow(CoreEngine::GetWindow());
 
@@ -431,6 +434,9 @@ namespace Editor {
         }
 
         CoreEngine::RenderBegin();
+
+        // Draw skybox first (background)
+        CoreEngine::DrawSkybox();
 
         auto& sceneObjs = CoreEngine::GetSceneObjects();
 
