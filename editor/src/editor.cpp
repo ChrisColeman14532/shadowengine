@@ -67,12 +67,20 @@ namespace Editor {
 
         CoreEngine::ClearScene();
 
-        CoreEngine::AddToScene("ground", CoreEngine::GetPrimitiveMesh("plane"));
-        auto& ground = CoreEngine::GetSceneObjects().back();
+        auto groundMesh = CoreEngine::GetPrimitiveMesh("plane");
+        auto groundMat = CoreEngine::CreateDefaultMaterial();
+        groundMat.name = "ground_material";
+        groundMat.baseColor = glm::vec3(0.3f, 0.3f, 0.25f);
+        auto& ground = CoreEngine::AddToSceneWithMaterial("ground", groundMesh, groundMat);
         ground.position = {0, -2.0f, 0};
         ground.scale = {10, 1, 10};
 
-        CoreEngine::AddToScene("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)));
+        auto loadedMat = CoreEngine::CreateDefaultMaterial();
+        loadedMat.name = "loaded_model_material";
+        loadedMat.baseColor = glm::vec3(0.7f, 0.7f, 0.7f);
+        loadedMat.roughness = 0.8f;
+        loadedMat.metallic = 0.2f;
+        CoreEngine::AddToSceneWithMaterial("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)), loadedMat);
 
         float maxX = fmaxf(modelExtent.x, modelExtent.y);
         float maxDim = fmaxf(maxX, modelExtent.z);
@@ -101,7 +109,9 @@ namespace Editor {
             if (ImGui::Button("Add Cube", ImVec2(-1, 0))) {
                 auto mesh = CoreEngine::GetPrimitiveMesh("cube");
                 if (mesh) {
-                    auto& obj = CoreEngine::AddToScene("cube_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh);
+                    auto mat = CoreEngine::CreateDefaultMaterial();
+                    mat.name = "cube_material";
+                    auto& obj = CoreEngine::AddToSceneWithMaterial("cube_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh, mat);
                     obj.position = {0, 0.5f, 0};
                     obj.scale = {1, 1, 1};
                 }
@@ -110,7 +120,9 @@ namespace Editor {
             if (ImGui::Button("Add Plane", ImVec2(-1, 0))) {
                 auto mesh = CoreEngine::GetPrimitiveMesh("plane");
                 if (mesh) {
-                    auto& obj = CoreEngine::AddToScene("plane_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh);
+                    auto mat = CoreEngine::CreateDefaultMaterial();
+                    mat.name = "plane_material";
+                    auto& obj = CoreEngine::AddToSceneWithMaterial("plane_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh, mat);
                     obj.position = {0, -1.0f, 0};
                     obj.scale = {10, 1, 10};
                 }
@@ -119,7 +131,7 @@ namespace Editor {
             ImGui::Separator();
             ImGui::Text("Scene Objects");
 
-            auto& scene = CoreEngine::GetSceneObjects();
+            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
             uint32_t selectedId = CoreEngine::GetSelectedObjectId();
 
             if (scene.empty()) {
@@ -163,6 +175,7 @@ namespace Editor {
             ImGui::Separator();
             if (ImGui::Button("Clear Scene", ImVec2(-1, 0))) {
                 CoreEngine::ClearScene();
+                CoreEngine::GetSceneObjectsWithMaterials().clear();
             }
         }
         ImGui::End();
@@ -180,9 +193,9 @@ namespace Editor {
         ImGui::SetNextWindowPos(inspectorPos);
         ImGui::SetNextWindowSize(panelSize);
         if (ImGui::Begin("Inspector", nullptr)) {
-            auto& scene = CoreEngine::GetSceneObjects();
+            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
             uint32_t selectedId = CoreEngine::GetSelectedObjectId();
-            CoreEngine::SceneObject* selected = nullptr;
+            CoreEngine::SceneObjectWithMaterial* selected = nullptr;
 
             for (auto& obj : scene) {
                 if (obj.id == selectedId) {
@@ -195,6 +208,7 @@ namespace Editor {
                 ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "No object selected");
                 ImGui::Separator();
             } else {
+                // Object name
                 char name_buf[256];
                 strncpy(name_buf, selected->name.c_str(), sizeof(name_buf) - 1);
                 name_buf[sizeof(name_buf) - 1] = '\0';
@@ -234,6 +248,74 @@ namespace Editor {
                 ImGui::PopID();
                 ImGui::Separator();
 
+                // ── Material section ──
+                ImGui::Text("Material");
+                ImGui::Checkbox("Use Material", &selected->material.useMaterial);
+
+                if (selected->material.useMaterial) {
+                    char matNameBuf[256];
+                    strncpy(matNameBuf, selected->material.name.c_str(), sizeof(matNameBuf) - 1);
+                    matNameBuf[sizeof(matNameBuf) - 1] = '\0';
+                    ImGui::InputText("Material Name", matNameBuf, sizeof(matNameBuf));
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        selected->material.name = matNameBuf;
+                    }
+
+                    ImGui::Separator();
+                    ImGui::Text("Base Color");
+                    float bc[3] = {selected->material.baseColor.r, selected->material.baseColor.g, selected->material.baseColor.b};
+                    if (ImGui::ColorEdit3("##baseColor", bc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreviewHalf)) {
+                        selected->material.baseColor = glm::vec3(bc[0], bc[1], bc[2]);
+                    }
+
+                    ImGui::Separator();
+                    ImGui::Text("Diffuse Texture");
+                    if (selected->material.diffuseTexture && selected->material.diffuseTexture->id) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Loaded (%dx%d)", 
+                            selected->material.diffuseTexture->width, 
+                            selected->material.diffuseTexture->height);
+                        if (ImGui::SmallButton("Unload Texture")) {
+                            CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
+                            selected->material.diffuseTexture = nullptr;
+                        }
+                    } else {
+                        if (ImGui::Button("Load Texture...", ImVec2(-1, 0))) {
+                            // Simple file picker - try common paths
+                            static char texPath[MAX_PATH] = {0};
+                            if (ImGui::InputText("##texPath", texPath, sizeof(texPath))) {
+                                if (selected->material.diffuseTexture && selected->material.diffuseTexture->id) {
+                                    // Already has a texture, destroy it
+                                    CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
+                                    selected->material.diffuseTexture = nullptr;
+                                }
+                                selected->material.diffuseTexture = new CoreEngine::Texture();
+                                *selected->material.diffuseTexture = CoreEngine::LoadTexture(texPath);
+                                if (!selected->material.diffuseTexture->id) {
+                                    delete selected->material.diffuseTexture;
+                                    selected->material.diffuseTexture = nullptr;
+                                }
+                                texPath[0] = '\0';
+                            }
+                        }
+                    }
+
+                    ImGui::Separator();
+                    ImGui::Text("PBR Properties");
+                    ImGui::SliderFloat("Metallic", &selected->material.metallic, 0.0f, 1.0f);
+                    ImGui::SliderFloat("Roughness", &selected->material.roughness, 0.0f, 1.0f);
+                    ImGui::SliderFloat("AO", &selected->material.ao, 0.0f, 1.0f);
+
+                    ImGui::Separator();
+                    ImGui::Text("Emissive");
+                    float ec[3] = {selected->material.emissiveColor.r, selected->material.emissiveColor.g, selected->material.emissiveColor.b};
+                    if (ImGui::ColorEdit3("##emissive", ec, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreviewHalf)) {
+                        selected->material.emissiveColor = glm::vec3(ec[0], ec[1], ec[2]);
+                    }
+                }
+
+                ImGui::Separator();
+
+                // Mesh info
                 if (selected->mesh) {
                     ImGui::Text("Mesh: %s", selected->mesh->name.c_str());
                     ImGui::Text("Indices: %d", selected->mesh->indexCount);
@@ -246,6 +328,11 @@ namespace Editor {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
                 if (ImGui::Button("Delete Object", ImVec2(-1, 0))) {
                     CoreEngine::RemoveFromScene(selected->id);
+                    // Clean up texture if loaded
+                    if (selected->material.diffuseTexture) {
+                        CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
+                        delete selected->material.diffuseTexture;
+                    }
                 }
                 ImGui::PopStyleColor(2);
             }
@@ -268,9 +355,9 @@ namespace Editor {
             ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoInputs)) {
-            auto& scene = CoreEngine::GetSceneObjects();
+            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
             char fpsText[128];
-            snprintf(fpsText, sizeof(fpsText), "ShadowEngine v0.2 | Objects: %d | FPS: %.1f",
+            snprintf(fpsText, sizeof(fpsText), "ShadowEngine v0.2 | Objects: %d | FPS: %.1f | T - Toggle Material Mode",
                 (int)scene.size(), ImGui::GetIO().Framerate);
             ImGui::Text(fpsText);
             ImGui::SameLine(ImGui::GetWindowWidth() - 200);
@@ -370,7 +457,7 @@ namespace Editor {
         glfwSetKeyCallback(CoreEngine::GetWindow(), [](GLFWwindow* w, int key, int scancode, int action, int mods) {
             if (action == GLFW_PRESS || action == GLFW_REPEAT) {
                 float speed = 0.05f;
-                auto& scene = CoreEngine::GetSceneObjects();
+                auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
                 uint32_t selectedId = CoreEngine::GetSelectedObjectId();
                 for (auto& obj : scene) {
                     if (obj.id == selectedId && obj.name.find("cube") != std::string::npos) {
@@ -438,8 +525,9 @@ namespace Editor {
         // Draw skybox first (background)
         CoreEngine::DrawSkybox();
 
-        auto& sceneObjs = CoreEngine::GetSceneObjects();
+        auto& sceneObjs = CoreEngine::GetSceneObjectsWithMaterials();
 
+        // Check for ground and create if missing
         bool hasGround = false;
         for (const auto& obj : sceneObjs) {
             if (obj.name == "ground") { hasGround = true; break; }
@@ -447,8 +535,11 @@ namespace Editor {
         if (!hasGround) {
             auto planeMesh = CoreEngine::GetPrimitiveMesh("plane");
             if (planeMesh) {
-                CoreEngine::AddToScene("ground", planeMesh);
-                auto& plane = CoreEngine::GetSceneObjects().back();
+                auto groundMat = CoreEngine::CreateDefaultMaterial();
+                groundMat.name = "ground_material";
+                groundMat.baseColor = glm::vec3(0.3f, 0.3f, 0.25f);
+                CoreEngine::AddToSceneWithMaterial("ground", planeMesh, groundMat);
+                auto& plane = CoreEngine::GetSceneObjectsWithMaterials().back();
                 plane.position = {0, -1.0f, 0};
                 plane.scale = {10, 1, 10};
             }
@@ -493,39 +584,8 @@ namespace Editor {
         glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
         glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
 
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, (float)w / (float)h);
-
-        GLuint prog = CoreEngine::GetShaderProgram();
-        GLint viewLoc = glGetUniformLocation(prog, "uView");
-        GLint projLoc = glGetUniformLocation(prog, "uProjection");
-        if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
-        if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
-
-        for (auto& obj : sceneObjs) {
-            auto& mesh = obj.mesh;
-            if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
-
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
-            model = glm::rotate(model, (float)obj.rotation.x, glm::vec3(1, 0, 0));
-            model = glm::rotate(model, (float)obj.rotation.y, glm::vec3(0, 1, 0));
-            model = glm::rotate(model, (float)obj.rotation.z, glm::vec3(0, 0, 1));
-            model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
-
-            CoreEngine::SetUniformMat4(prog, "uModel", model);
-            glm::vec3 color(0.4f + obj.position.x * 0.05f,
-                            0.4f + obj.position.y * 0.05f,
-                            0.4f + obj.position.z * 0.05f);
-            CoreEngine::SetUniformVec3(prog, "uColor", color);
-
-            glBindVertexArray(mesh->VAO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
-            glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-            glBindVertexArray(0);
-        }
+        // Draw scene with materials
+        CoreEngine::RenderSceneWithMaterials();
 
         // Draw grid on the ground
         CoreEngine::DrawGrid(20, 1.0f, 10.0f);

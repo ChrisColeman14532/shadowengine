@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-// ── Default shader source ───────────────────────────────────────────
+// ── Default (solid color) shader source ────────────────────────────
 
 static const char* default_vs = R"(
 #version 330 core
@@ -41,6 +41,78 @@ void main() {
     float diff = max(dot(normalize(vNormal), lightDir), 0.0);
     vec3 ambient = 0.3 * uColor;
     vec3 result = ambient + diff * uColor;
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+// ── Material (textured) shader source ───────────────────────────────
+
+static const char* material_vs = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aUV;
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
+
+out vec3 vNormal;
+out vec2 vUV;
+out vec3 vWorldPos;
+
+void main() {
+    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
+    vNormal = mat3(uModel) * aNormal;
+    vUV = aUV;
+    vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
+}
+)";
+
+static const char* material_fs = R"(
+#version 330 core
+in vec3 vNormal;
+in vec2 vUV;
+in vec3 vWorldPos;
+
+out vec4 FragColor;
+
+uniform vec3 uBaseColor;
+uniform vec3 uEmissiveColor;
+uniform float uMetallic;
+uniform float uRoughness;
+uniform float uAO;
+
+uniform sampler2D uDiffuseTex;
+uniform sampler2D uNormalTex;
+uniform int uHasDiffuse;
+uniform int uHasNormal;
+
+void main() {
+    vec3 baseColor = uBaseColor;
+    vec3 normal = normalize(vNormal);
+
+    // Sample diffuse texture if available
+    if (uHasDiffuse == 1) {
+        baseColor *= texture(uDiffuseTex, vUV).rgb;
+    }
+
+    // Compute lighting
+    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+    vec3 viewDir = normalize(-vWorldPos);
+
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    
+    // Simple specular with GGX approximation
+    vec3 halfDir = normalize(lightDir + viewDir);
+    float NdotH = max(dot(normal, halfDir), 0.0);
+    float spec = pow(NdotH, mix(128.0, 8.0, uRoughness)) * uMetallic;
+    
+    vec3 ambient = 0.15 * baseColor * uAO;
+    vec3 diffuse = NdotL * baseColor;
+    vec3 specular = spec * vec3(1.0, 0.98, 0.95) * (0.3 + 0.7 * uMetallic);
+    
+    vec3 result = (ambient + diffuse + specular) + uEmissiveColor;
     FragColor = vec4(result, 1.0);
 }
 )";
@@ -1013,6 +1085,179 @@ void CoreEngine::DrawSkybox() {
     glDepthMask(GL_TRUE);
     glBindVertexArray(0);
     glUseProgram(s_shaderProg);
+}
+
+// ── Textures ────────────────────────────────────────────────────────
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "core/stb_image.h"
+
+Texture CoreEngine::LoadTexture(const std::string& path) {
+    Texture tex;
+    tex.width = 0;
+    tex.height = 0;
+    tex.channels = 0;
+
+    // stb_image loads with flipped Y by default; flip horizontally for GL
+    stbi_set_flip_vertically_on_load(false);
+    unsigned char* data = stbi_load(path.c_str(), &tex.width, &tex.height, &tex.channels, 4);
+    if (!data) {
+        fprintf(stderr, "[Texture] Failed to load: %s (stb error: %s)\n", 
+                path.c_str(), stbi_failure_reason() ? stbi_failure_reason() : "unknown");
+        stbi_image_free(data);
+        return tex;
+    }
+
+    glGenTextures(1, &tex.id);
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+
+    // Set texture parameters
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    stbi_image_free(data);
+
+    return tex;
+}
+
+void CoreEngine::DestroyTexture(Texture& tex) {
+    if (tex.id) {
+        glDeleteTextures(1, &tex.id);
+        tex.id = 0;
+    }
+    tex.width = 0;
+    tex.height = 0;
+    tex.channels = 0;
+}
+
+void CoreEngine::BindTexture(Texture& tex, GLuint unit) {
+    if (tex.id == 0) return;
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+}
+
+// ── Materials ───────────────────────────────────────────────────────
+
+Material CoreEngine::CreateDefaultMaterial() {
+    return Material{
+        "default",
+        glm::vec3(0.5f),  // base color
+        glm::vec3(0.0f),  // emissive
+        0.0f,             // metallic
+        1.0f,             // roughness
+        1.0f,             // AO
+        nullptr, nullptr,
+        false
+    };
+}
+
+// ── Static state for material-based scene ───────────────────────────
+
+static std::vector<SceneObjectWithMaterial> s_sceneObjectsWithMat;
+static GLuint s_materialShaderProg = 0;
+static bool s_materialShaderInited = false;
+
+// ── Render scene with materials ─────────────────────────────────────
+
+void CoreEngine::RenderSceneWithMaterials() {
+    // Init material shader on first call
+    if (!s_materialShaderInited) {
+        s_materialShaderProg = CoreEngine::CreateShaderProgram(material_vs, material_fs);
+        s_materialShaderInited = true;
+    }
+
+    // Get camera and projection
+    auto camPos = s_cameraPos;
+    auto camTarget = s_cameraTarget;
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(camPos.x, camPos.y, camPos.z),
+        glm::vec3(camTarget.x, camTarget.y, camTarget.z),
+        glm::vec3(0, 1, 0));
+
+    int w = 1280, h = 720;
+    GLFWwindow* win = s_window;
+    if (win) glfwGetFramebufferSize(win, &w, &h);
+    glm::mat4 projection = glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f);
+
+    glUseProgram(s_materialShaderProg);
+    GLint viewLoc = glGetUniformLocation(s_materialShaderProg, "uView");
+    GLint projLoc = glGetUniformLocation(s_materialShaderProg, "uProjection");
+    if (viewLoc != -1) CoreEngine::SetUniformMat4(s_materialShaderProg, "uView", view);
+    if (projLoc != -1) CoreEngine::SetUniformMat4(s_materialShaderProg, "uProjection", projection);
+
+    // Set default material values (will be overwritten per-object if material is used)
+    CoreEngine::SetUniformVec3(s_materialShaderProg, "uBaseColor", glm::vec3(0.5f));
+    CoreEngine::SetUniformVec3(s_materialShaderProg, "uEmissiveColor", glm::vec3(0.0f));
+    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uMetallic"), 0.0f);
+    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uRoughness"), 1.0f);
+    glUniform1f(glGetUniformLocation(s_materialShaderProg, "uAO"), 1.0f);
+    glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasDiffuse"), 0);
+    glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasNormal"), 0);
+
+    for (auto& obj : s_sceneObjectsWithMat) {
+        auto& mesh = obj.mesh;
+        if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
+
+        // Build model matrix
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
+        model = glm::rotate(model, (float)obj.rotation.x, glm::vec3(1, 0, 0));
+        model = glm::rotate(model, (float)obj.rotation.y, glm::vec3(0, 1, 0));
+        model = glm::rotate(model, (float)obj.rotation.z, glm::vec3(0, 0, 1));
+        model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
+
+        CoreEngine::SetUniformMat4(s_materialShaderProg, "uModel", model);
+
+        // Bind texture if material uses one
+        int hasDiffuse = 0, hasNormal = 0;
+        if (obj.material.useMaterial && obj.material.diffuseTexture && obj.material.diffuseTexture->id) {
+            BindTexture(*obj.material.diffuseTexture, 0);
+            hasDiffuse = 1;
+        }
+        glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasDiffuse"), hasDiffuse);
+
+        if (obj.material.useMaterial && obj.material.normalTexture && obj.material.normalTexture->id) {
+            BindTexture(*obj.material.normalTexture, 1);
+            hasNormal = 1;
+        }
+        glUniform1i(glGetUniformLocation(s_materialShaderProg, "uHasNormal"), hasNormal);
+
+        // Set material uniforms
+        glUniform3fv(glGetUniformLocation(s_materialShaderProg, "uBaseColor"), 1, glm::value_ptr(obj.material.baseColor));
+        glUniform3fv(glGetUniformLocation(s_materialShaderProg, "uEmissiveColor"), 1, glm::value_ptr(obj.material.emissiveColor));
+        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uMetallic"), obj.material.metallic);
+        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uRoughness"), obj.material.roughness);
+        glUniform1f(glGetUniformLocation(s_materialShaderProg, "uAO"), obj.material.ao);
+
+        // Draw
+        glBindVertexArray(mesh->VAO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
+        glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+    }
+
+    glUseProgram(s_shaderProg);
+}
+
+std::vector<SceneObjectWithMaterial>& CoreEngine::GetSceneObjectsWithMaterials() {
+    return s_sceneObjectsWithMat;
+}
+
+SceneObjectWithMaterial& CoreEngine::AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat) {
+    SceneObjectWithMaterial obj;
+    obj.id = s_nextSceneObjectId++;
+    obj.name = name;
+    obj.mesh = std::move(mesh);
+    obj.material = mat;
+    s_sceneObjectsWithMat.push_back(std::move(obj));
+    return s_sceneObjectsWithMat.back();
 }
 
 } // namespace CoreEngine

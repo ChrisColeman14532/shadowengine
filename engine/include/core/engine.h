@@ -141,4 +141,43 @@ namespace CoreEngine {
     void InitSkybox();
     void DrawSkybox();
 
+    // ── Textures ────────────────────────────────────────────────────
+
+    struct Texture {
+        GLuint id = 0;
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+    };
+    Texture LoadTexture(const std::string& path);
+    void DestroyTexture(Texture& tex);
+    void BindTexture(Texture& tex, GLuint unit);
+
+    // ── Materials ───────────────────────────────────────────────────
+
+    struct Material {
+        std::string name = "default";
+        glm::vec3 baseColor = glm::vec3(0.5f);
+        glm::vec3 emissiveColor = glm::vec3(0.0f);
+        float metallic = 0.0f;    // 0 = non-metal, 1 = metal
+        float roughness = 1.0f;   // 0 = polished, 1 = rough
+        float ao = 1.0f;          // ambient occlusion multiplier
+        Texture* diffuseTexture = nullptr;
+        Texture* normalTexture = nullptr;
+        bool useMaterial = false;
+    };
+    Material CreateDefaultMaterial();
+
+    // ── Scene object with material ──────────────────────────────────
+
+    // Extended scene object that can hold a material
+    struct SceneObjectWithMaterial : SceneObject {
+        Material material;
+    };
+    std::vector<SceneObjectWithMaterial>& GetSceneObjectsWithMaterials();
+    SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat);
+
+    // ── Render with materials ───────────────────────────────────────
+    void RenderSceneWithMaterials();
+
 } // namespace CoreEngine
