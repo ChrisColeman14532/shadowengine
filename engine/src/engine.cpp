@@ -313,6 +313,29 @@ static void buildPrimitiveVAOs() {
     glBindVertexArray(0);
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
 
+    // Also create a simple test mesh with 3 vertices (triangle) for debugging
+    static const float triVerts[] = {
+        0.0f,  0.5f,  0.0f,   0,0,1,  0,0,
+       -0.3f, -0.5f,  0.0f,   0,0,1,  1,0,
+        0.3f, -0.5f,  0.0f,   0,0,1,  0,1,
+    };
+    static GLuint triVBO = 0;
+    static GLuint triVAO = 0;
+    if (triVAO == 0) {
+        glGenVertexArrays(1, &triVAO);
+        glGenBuffers(1, &triVBO);
+        glBindVertexArray(triVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, triVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(triVerts), triVerts, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
+        glBindVertexArray(0);
+    }
+
     // Build plane mesh
     CoreEngine::PrimitiveMesh plane;
     plane.name = "plane";
