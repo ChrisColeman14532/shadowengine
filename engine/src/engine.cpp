@@ -1099,7 +1099,6 @@ void CoreEngine::DrawSkybox() {
     glDisable(GL_CULL_FACE);
     glDepthFunc(GL_LEQUAL);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-    glEnable(GL_CULL_FACE);
     glDepthFunc(GL_LESS);
     glDepthMask(GL_TRUE);
     glBindVertexArray(0);
