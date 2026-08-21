@@ -482,22 +482,12 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vsSource, nullptr);
     glCompileShader(vs);
-    GLint vsSuccess;
-    glGetShaderiv(vs, GL_COMPILE_STATUS, &vsSuccess);
-    if (!vsSuccess) {
-        GLint len;
-        glGetShaderiv(vs, GL_INFO_LOG_LENGTH, &len);
-        char* log = (char*)alloca(len);
-        glGetShaderInfoLog(vs, len, nullptr, log);
-        fprintf(stderr, "VS compile error:\n%s\n", log);
-    }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &fsSource, nullptr);
     glCompileShader(fs);
     GLint fsSuccess;
     glGetShaderiv(fs, GL_COMPILE_STATUS, &fsSuccess);
-    fprintf(stderr, "[SHADER DEBUG] Compiling fragment shader source:\n%s\n", fsSource);
     if (!fsSuccess) {
         GLint len;
         glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &len);

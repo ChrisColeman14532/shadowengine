@@ -599,8 +599,7 @@ namespace Editor {
             auto& mesh = obj.mesh;
             if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
-            fprintf(stderr, "[DEBUG] Drawing: %s VAO=%u EBO=%u indices=%u\n",
-                obj.name.c_str(), mesh->VAO, mesh->EBO, mesh->indexCount);
+            glUseProgram(prog);
 
             glm::mat4 model = glm::mat4(1.0f);
             model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
@@ -611,7 +610,6 @@ namespace Editor {
 
             CoreEngine::SetUniformMat4(prog, "uModel", model);
             CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
-            glUseProgram(prog);
 
             glBindVertexArray(mesh->VAO);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
