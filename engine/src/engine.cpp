@@ -245,48 +245,52 @@ static void buildPrimitiveVAOs() {
     // Build cube mesh data manually (not via CreateBox which is in namespace)
     CoreEngine::PrimitiveMesh cube;
     cube.name = "cube";
-    cube.indexCount = 36;
 
-    // Simple 24-vertex cube with interleaved pos/normal/uv (NO EBO)
+    // 6 faces * 2 triangles per face * 3 vertices per triangle = 36 vertices
+    // Each vertex: pos(3) + normal(3) + uv(2) = 8 floats
     static const float cubeVerts[] = {
-        // Front face (+Z)
+        // Front face (+Z): 2 triangles = 6 vertices
         -0.5f, -0.5f,  0.5f,   0,0,1,  0,0,
          0.5f, -0.5f,  0.5f,   0,0,1,  1,0,
          0.5f,  0.5f,  0.5f,   0,0,1,  1,1,
+        -0.5f, -0.5f,  0.5f,   0,0,1,  0,0,
+         0.5f,  0.5f,  0.5f,   0,0,1,  1,1,
         -0.5f,  0.5f,  0.5f,   0,0,1,  0,1,
-        // Back face (-Z)
-        -0.5f, -0.5f, -0.5f,   0,0,-1,  0,0,
-        -0.5f,  0.5f, -0.5f,   0,0,-1,  1,0,
-         0.5f,  0.5f, -0.5f,   0,0,-1,  1,1,
-         0.5f, -0.5f, -0.5f,   0,0,-1,  0,1,
-        // Top face (+Y)
+        // Back face (-Z): 2 triangles = 6 vertices
+         0.5f, -0.5f, -0.5f,   0,0,-1,  0,0,
+        -0.5f, -0.5f, -0.5f,   0,0,-1,  1,0,
+        -0.5f,  0.5f, -0.5f,   0,0,-1,  1,1,
+         0.5f, -0.5f, -0.5f,   0,0,-1,  0,0,
+        -0.5f,  0.5f, -0.5f,   0,0,-1,  1,1,
+         0.5f,  0.5f, -0.5f,   0,0,-1,  0,1,
+        // Top face (+Y): 2 triangles = 6 vertices
         -0.5f,  0.5f,  0.5f,   0,1,0,  0,0,
          0.5f,  0.5f,  0.5f,   0,1,0,  1,0,
          0.5f,  0.5f, -0.5f,   0,1,0,  1,1,
+        -0.5f,  0.5f,  0.5f,   0,1,0,  0,0,
+         0.5f,  0.5f, -0.5f,   0,1,0,  1,1,
         -0.5f,  0.5f, -0.5f,   0,1,0,  0,1,
-        // Bottom face (-Y)
+        // Bottom face (-Y): 2 triangles = 6 vertices
         -0.5f, -0.5f, -0.5f,   0,-1,0,  0,0,
          0.5f, -0.5f, -0.5f,   0,-1,0,  1,0,
          0.5f, -0.5f,  0.5f,   0,-1,0,  1,1,
+        -0.5f, -0.5f, -0.5f,   0,-1,0,  0,0,
+         0.5f, -0.5f,  0.5f,   0,-1,0,  1,1,
         -0.5f, -0.5f,  0.5f,   0,-1,0,  0,1,
-        // Right face (+X)
+        // Right face (+X): 2 triangles = 6 vertices
          0.5f, -0.5f,  0.5f,   1,0,0,  0,0,
          0.5f, -0.5f, -0.5f,   1,0,0,  1,0,
          0.5f,  0.5f, -0.5f,   1,0,0,  1,1,
+         0.5f, -0.5f,  0.5f,   1,0,0,  0,0,
+         0.5f,  0.5f, -0.5f,   1,0,0,  1,1,
          0.5f,  0.5f,  0.5f,   1,0,0,  0,1,
-        // Left face (-X)
+        // Left face (-X): 2 triangles = 6 vertices
         -0.5f, -0.5f, -0.5f,  -1,0,0,  0,0,
         -0.5f, -0.5f,  0.5f,  -1,0,0,  1,0,
         -0.5f,  0.5f,  0.5f,  -1,0,0,  1,1,
+        -0.5f, -0.5f, -0.5f,  -1,0,0,  0,0,
+        -0.5f,  0.5f,  0.5f,  -1,0,0,  1,1,
         -0.5f,  0.5f, -0.5f,  -1,0,0,  0,1,
-    };
-    static const GLuint cubeIndices[] = {
-        0,1,2, 0,2,3,       // front
-        4,6,5, 4,7,6,       // back
-        8,9,10, 8,10,11,    // top
-        12,13,14, 12,14,15, // bottom
-        16,17,18, 16,18,19, // right
-        20,21,22, 20,22,23  // left
     };
 
     glGenVertexArrays(1, &cube.VAO);
@@ -302,18 +306,21 @@ static void buildPrimitiveVAOs() {
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
-    // No EBO — use glDrawArrays instead
-    cube.EBO = 0; // mark as no-index
+
+    // No EBO — use glDrawArrays
+    cube.EBO = 0;
     cube.indexCount = sizeof(cubeVerts) / (sizeof(float) * 8);
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
 
-    // Build plane mesh
+    // Build plane mesh - 2 triangles = 6 vertices
     CoreEngine::PrimitiveMesh plane;
     plane.name = "plane";
 
     static const float planeVerts[] = {
         -5.0f, 0, -5.0f,   0,1,0,  0,0,
          5.0f, 0, -5.0f,   0,1,0,  1,0,
+         5.0f, 0,  5.0f,   0,1,0,  1,1,
+        -5.0f, 0, -5.0f,   0,1,0,  0,0,
          5.0f, 0,  5.0f,   0,1,0,  1,1,
         -5.0f, 0,  5.0f,   0,1,0,  0,1,
     };
@@ -331,6 +338,7 @@ static void buildPrimitiveVAOs() {
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
+
     // No EBO — use glDrawArrays
     plane.EBO = 0;
     plane.indexCount = sizeof(planeVerts) / (sizeof(float) * 8);
@@ -473,6 +481,18 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vsSource, nullptr);
     glCompileShader(vs);
+    GLint vsSuccess;
+    glGetShaderiv(vs, GL_COMPILE_STATUS, &vsSuccess);
+    if (!vsSuccess) {
+        GLint logLen;
+        glGetShaderiv(vs, GL_INFO_LOG_LENGTH, &logLen);
+        if (logLen > 1) {
+            char* log = new char[logLen];
+            glGetShaderInfoLog(vs, logLen, nullptr, log);
+            fprintf(stderr, "[SHADER ERR] Vertex shader compile error:\n%s\n", log);
+            delete[] log;
+        }
+    }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &fsSource, nullptr);
@@ -480,11 +500,14 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     GLint fsSuccess;
     glGetShaderiv(fs, GL_COMPILE_STATUS, &fsSuccess);
     if (!fsSuccess) {
-        GLint len;
-        glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &len);
-        char* log = (char*)alloca(len);
-        glGetShaderInfoLog(fs, len, nullptr, log);
-        fprintf(stderr, "FS compile error:\n%s\n", log);
+        GLint logLen;
+        glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &logLen);
+        if (logLen > 1) {
+            char* log = new char[logLen];
+            glGetShaderInfoLog(fs, logLen, nullptr, log);
+            fprintf(stderr, "[SHADER ERR] Fragment shader compile error:\n%s\n", log);
+            delete[] log;
+        }
     }
 
     GLuint prog = glCreateProgram();
@@ -497,9 +520,24 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     if (!success) {
         GLint len;
         glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &len);
-        char* log = (char*)alloca(len);
+        char* log = new char[len];
         glGetProgramInfoLog(prog, len, nullptr, log);
-        fprintf(stderr, "Program link error:\n%s\n", log);
+        fprintf(stderr, "[SHADER ERR] Program link error:\n%s\n", log);
+        delete[] log;
+    }
+    
+    // Print all active uniforms for debugging
+    GLint numUniforms;
+    glGetProgramiv(prog, GL_ACTIVE_UNIFORMS, &numUniforms);
+    fprintf(stderr, "[SHADER] Program %u has %d uniforms\n", prog, numUniforms);
+    for (int i = 0; i < numUniforms; i++) {
+        GLint nameLen;
+        GLsizei actualLen;
+        GLenum type;
+        char name[256];
+        glGetActiveUniform(prog, (GLuint)i, sizeof(name), &actualLen, &nameLen, &type, name);
+        GLint loc = glGetUniformLocation(prog, name);
+        fprintf(stderr, "[SHADER]   uniform '%s' loc=%d\n", name, loc);
     }
     glDeleteShader(vs);
     glDeleteShader(fs);

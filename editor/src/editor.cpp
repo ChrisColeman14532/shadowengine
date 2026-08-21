@@ -612,13 +612,7 @@ namespace Editor {
             CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
 
             glBindVertexArray(mesh->VAO);
-            if (mesh->EBO == 0) {
-                // No index buffer — draw with glDrawArrays
-                glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);
-            } else {
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
-                glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
-            }
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);
             glBindVertexArray(0);
         }
 
