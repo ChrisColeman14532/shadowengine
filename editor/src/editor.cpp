@@ -584,6 +584,40 @@ namespace Editor {
         glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
         glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
 
+        // Draw scene objects
+        int w = 1280, h = 720;
+        glfwGetFramebufferSize(window, &w, &h);
+        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, (float)w / (float)h);
+        GLuint prog = CoreEngine::GetShaderProgram();
+        GLint viewLoc = glGetUniformLocation(prog, "uView");
+        GLint projLoc = glGetUniformLocation(prog, "uProjection");
+        if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
+        if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
+
+        for (auto& obj : sceneObjs) {
+            auto& mesh = obj.mesh;
+            if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
+
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
+            model = glm::rotate(model, (float)obj.rotation.x, glm::vec3(1, 0, 0));
+            model = glm::rotate(model, (float)obj.rotation.y, glm::vec3(0, 1, 0));
+            model = glm::rotate(model, (float)obj.rotation.z, glm::vec3(0, 0, 1));
+            model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
+
+            CoreEngine::SetUniformMat4(prog, "uModel", model);
+            glm::vec3 color(0.4f + obj.position.x * 0.05f,
+                            0.4f + obj.position.y * 0.05f,
+                            0.4f + obj.position.z * 0.05f);
+            CoreEngine::SetUniformVec3(prog, "uColor", color);
+
+            glBindVertexArray(mesh->VAO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
+            glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+        }
+
         // Draw grid on the ground
         CoreEngine::DrawGrid(20, 1.0f, 10.0f);
 
