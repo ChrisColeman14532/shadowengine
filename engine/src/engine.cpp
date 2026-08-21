@@ -38,9 +38,13 @@ uniform vec3 uColor;
 
 void main() {
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float diff = max(dot(normalize(vNormal), lightDir), 0.0);
-    vec3 ambient = 0.3 * uColor;
-    vec3 result = ambient + diff * uColor;
+    vec3 normal = normalize(vNormal);
+    float diff = max(dot(normal, lightDir), 0.0);
+    
+    vec3 ambient = vec3(0.25f) * uColor;
+    vec3 diffuse = diff * 0.75f * uColor;
+    
+    vec3 result = ambient + diffuse;
     FragColor = vec4(result, 1.0);
 }
 )";

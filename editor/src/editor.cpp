@@ -607,16 +607,8 @@ namespace Editor {
 
             CoreEngine::SetUniformMat4(prog, "uModel", model);
             
-            // Use material base color if enabled, otherwise fall back to position-based color
-            glm::vec3 color;
-            if (obj.material.useMaterial) {
-                color = obj.material.baseColor;
-            } else {
-                color = glm::vec3(0.4f + obj.position.x * 0.05f,
-                                  0.4f + obj.position.y * 0.05f,
-                                  0.4f + obj.position.z * 0.05f);
-            }
-            CoreEngine::SetUniformVec3(prog, "uColor", color);
+            // Always use material baseColor — it defaults to gray, user can change it
+            CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
 
             glBindVertexArray(mesh->VAO);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
