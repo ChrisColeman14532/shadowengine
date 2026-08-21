@@ -599,14 +599,6 @@ namespace Editor {
             auto& mesh = obj.mesh;
             if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
-            static bool s_printed = false;
-            if (!s_printed) {
-                GLuint currentProg;
-                glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&currentProg);
-                fprintf(stderr, "[DEBUG] currentProg=%u expectedProg=%u\n", currentProg, prog);
-                s_printed = true;
-            }
-
             glUseProgram(prog);
 
             glm::mat4 model = glm::mat4(1.0f);
@@ -620,65 +612,14 @@ namespace Editor {
             CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
 
             glBindVertexArray(mesh->VAO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
-            glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
-
-            // Check for GL errors after draw
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR && !s_printed) {
-                fprintf(stderr, "[DEBUG] GL error after draw: %u\n", err);
+            if (mesh->EBO == 0) {
+                // No index buffer — draw with glDrawArrays
+                glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);
+            } else {
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->EBO);
+                glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, 0);
             }
-            s_printed = true;
-
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
-        }
-
-        // DEBUG: Draw a simple white triangle to test shader pipeline
-        {
-            float triVerts[] = {
-                 0.0f,  1.0f,  0.0f,   0,0,1,  0,0,
-                -1.0f, -1.0f,  0.0f,   0,0,1,  1,0,
-                 1.0f, -1.0f,  0.0f,   0,0,1,  0,1,
-            };
-            GLuint tVAO, tVBO;
-            glGenVertexArrays(1, &tVAO);
-            glGenBuffers(1, &tVBO);
-            glBindVertexArray(tVAO);
-            glBindBuffer(GL_ARRAY_BUFFER, tVBO);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(triVerts), triVerts, GL_DYNAMIC_DRAW);
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)0);
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
-            glEnableVertexAttribArray(2);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
-            glBindVertexArray(0);
-
-            // Position camera in front of triangle
-            CoreEngine::SetCameraPosition(CoreEngine::Vector3(0, 0, 5));
-            CoreEngine::SetCameraTarget(CoreEngine::Vector3(0, 0, 0));
-            auto cp = CoreEngine::GetCameraPosition();
-            auto ct = CoreEngine::GetCameraTarget();
-            glm::mat4 view = glm::lookAt(glm::vec3(cp.x, cp.y, cp.z), glm::vec3(ct.x, ct.y, ct.z), glm::vec3(0, 1, 0));
-
-            // Disable depth test to see if anything renders at all
-            glDisable(GL_DEPTH_TEST);
-            glUseProgram(prog);
-            GLint viewLoc = glGetUniformLocation(prog, "uView");
-            GLint projLoc = glGetUniformLocation(prog, "uProjection");
-            if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-            if (projLoc != -1) glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-            GLint modelLoc = glGetUniformLocation(prog, "uModel");
-            if (modelLoc != -1) glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
-
-            glBindVertexArray(tVAO);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glBindVertexArray(0);
-            glDeleteVertexArrays(1, &tVAO);
-            glDeleteBuffers(1, &tVBO);
-            glEnable(GL_DEPTH_TEST);
-            fprintf(stderr, "[DEBUG] Rendered white test triangle at origin\n");
         }
 
         // Draw grid on the ground

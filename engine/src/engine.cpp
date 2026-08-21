@@ -300,46 +300,16 @@ static void buildPrimitiveVAOs() {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    // Store indices in a static buffer
-    static GLuint cubeEBO = 0;
-    if (cubeEBO == 0) {
-        glGenBuffers(1, &cubeEBO);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubeEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
-    }
-    cube.EBO = cubeEBO;
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
+    // No EBO — use glDrawArrays instead
+    cube.EBO = 0; // mark as no-index
+    cube.indexCount = sizeof(cubeVerts) / (sizeof(float) * 8);
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
-
-    // Also create a simple test mesh with 3 vertices (triangle) for debugging
-    static const float triVerts[] = {
-        0.0f,  0.5f,  0.0f,   0,0,1,  0,0,
-       -0.3f, -0.5f,  0.0f,   0,0,1,  1,0,
-        0.3f, -0.5f,  0.0f,   0,0,1,  0,1,
-    };
-    static GLuint triVBO = 0;
-    static GLuint triVAO = 0;
-    if (triVAO == 0) {
-        glGenVertexArrays(1, &triVAO);
-        glGenBuffers(1, &triVBO);
-        glBindVertexArray(triVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, triVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(triVerts), triVerts, GL_STATIC_DRAW);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)0);
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
-        glBindVertexArray(0);
-    }
 
     // Build plane mesh
     CoreEngine::PrimitiveMesh plane;
     plane.name = "plane";
-    plane.indexCount = 6;
 
     static const float planeVerts[] = {
         -5.0f, 0, -5.0f,   0,1,0,  0,0,
@@ -347,11 +317,9 @@ static void buildPrimitiveVAOs() {
          5.0f, 0,  5.0f,   0,1,0,  1,1,
         -5.0f, 0,  5.0f,   0,1,0,  0,1,
     };
-    static const GLuint planeIndices[] = { 0, 1, 2, 0, 2, 3 };
 
     glGenVertexArrays(1, &plane.VAO);
     glGenBuffers(1, &plane.VBO);
-    glGenBuffers(1, &plane.EBO);
     glBindVertexArray(plane.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, plane.VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(planeVerts), planeVerts, GL_STATIC_DRAW);
@@ -361,11 +329,11 @@ static void buildPrimitiveVAOs() {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, plane.EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(planeIndices), planeIndices, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
+    // No EBO — use glDrawArrays
+    plane.EBO = 0;
+    plane.indexCount = sizeof(planeVerts) / (sizeof(float) * 8);
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(plane)));
 }
 
