@@ -71,3 +71,11 @@ target_include_directories(editor PRIVATE
     ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(editor PRIVATE engine)
+
+# Copy vcpkg DLLs to build output directory
+add_custom_command(TARGET editor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/installed/x64-windows/bin
+        $<TARGET_FILE_DIR:editor>
+    COMMENT "Copying vcpkg DLLs to build output"
+)
