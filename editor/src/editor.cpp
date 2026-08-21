@@ -522,8 +522,8 @@ namespace Editor {
 
         CoreEngine::RenderBegin();
 
-        // Draw skybox first (background) - DISABLED for debugging
-        // CoreEngine::DrawSkybox();
+        // Draw skybox first (background)
+        CoreEngine::DrawSkybox();
 
         auto& sceneObjs = CoreEngine::GetSceneObjectsWithMaterials();
 
@@ -589,32 +589,11 @@ namespace Editor {
         glfwGetFramebufferSize(window, &w, &h);
         glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, (float)w / (float)h);
         GLuint prog = CoreEngine::GetShaderProgram();
-        GLuint beforeProg;
-        glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&beforeProg);
-        fprintf(stderr, "[DEBUG] GetShaderProgram()=%u currentProgBefore=%u\n", prog, beforeProg);
         glUseProgram(prog);
-        GLuint afterProg;
-        glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&afterProg);
-        fprintf(stderr, "[DEBUG] currentProgAfter=%u\n", afterProg);
         GLint viewLoc = glGetUniformLocation(prog, "uView");
         GLint projLoc = glGetUniformLocation(prog, "uProjection");
         if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
         if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
-
-        static bool s_firstDraw = true;
-        if (s_firstDraw) {
-            fprintf(stderr, "[DEBUG] Scene objects count: %d\n", (int)sceneObjs.size());
-            for (auto& obj : sceneObjs) {
-                fprintf(stderr, "[DEBUG] Object: %s VAO=%u EBO=%u indices=%d\n",
-                    obj.name.c_str(), obj.mesh ? obj.mesh->VAO : 0,
-                    obj.mesh ? obj.mesh->EBO : 0, obj.mesh ? (int)obj.mesh->indexCount : 0);
-                if (obj.mesh) {
-                    GLenum err = glGetError();
-                    if (err != GL_NO_ERROR) fprintf(stderr, "[DEBUG] GL error after GetPrimitiveMesh: %u\n", err);
-                }
-            }
-            s_firstDraw = false;
-        }
 
         for (auto& obj : sceneObjs) {
             auto& mesh = obj.mesh;
@@ -631,49 +610,6 @@ namespace Editor {
 
             CoreEngine::SetUniformMat4(prog, "uModel", model);
             CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
-
-            // DEBUG: draw inline without VAO to test if shader works
-            if (obj.name == "ground") {
-                GLuint currentProg;
-                glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&currentProg);
-                fprintf(stderr, "[DEBUG] Before glUseProgram: currentProg=%u expectedProg=%u\n", currentProg, prog);
-
-                // Force program bind
-                glUseProgram(prog);
-                glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&currentProg);
-                fprintf(stderr, "[DEBUG] After glUseProgram: currentProg=%u\n", currentProg);
-
-                fprintf(stderr, "[DEBUG] Drawing ground inline\n");
-                float groundVerts[] = {
-                    -5.0f, -1.0f, -5.0f,   0,1,0,  0,0,
-                     5.0f, -1.0f, -5.0f,   0,1,0,  1,0,
-                     5.0f, -1.0f,  5.0f,   0,1,0,  1,1,
-                    -5.0f, -1.0f, -5.0f,   0,1,0,  0,0,
-                     5.0f, -1.0f,  5.0f,   0,1,0,  1,1,
-                    -5.0f, -1.0f,  5.0f,   0,1,0,  0,1,
-                };
-                GLuint tVAO, tVBO;
-                glGenVertexArrays(1, &tVAO);
-                glGenBuffers(1, &tVBO);
-                glBindVertexArray(tVAO);
-                glBindBuffer(GL_ARRAY_BUFFER, tVBO);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(groundVerts), groundVerts, GL_DYNAMIC_DRAW);
-                glEnableVertexAttribArray(0);
-                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-                glEnableVertexAttribArray(1);
-                glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-                glEnableVertexAttribArray(2);
-                glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-                glBindVertexArray(0);
-                glDisable(GL_DEPTH_TEST);
-                glBindVertexArray(tVAO);
-                glDrawArrays(GL_TRIANGLES, 0, 6);
-                glBindVertexArray(0);
-                glDeleteVertexArrays(1, &tVAO);
-                glDeleteBuffers(1, &tVBO);
-                glEnable(GL_DEPTH_TEST);
-                fprintf(stderr, "[DEBUG] GL error after ground draw: %u\n", glGetError());
-            }
 
             glBindVertexArray(mesh->VAO);
             glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);

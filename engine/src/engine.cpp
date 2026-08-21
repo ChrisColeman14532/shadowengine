@@ -866,7 +866,9 @@ void DrawGrid(int divisions, float unit, float halfExtent) {
             gridShaderInited = true;
         }
 
-        CoreEngine::UseShader(gridShaderProg);
+        // Save the original program before switching
+        GLuint savedShader = s_shaderProg;
+        glUseProgram(gridShaderProg);
         GLint viewLoc = glGetUniformLocation(gridShaderProg, "uView");
         GLint projLoc = glGetUniformLocation(gridShaderProg, "uProjection");
         GLint modelLoc = glGetUniformLocation(gridShaderProg, "uModel");
@@ -877,15 +879,15 @@ void DrawGrid(int divisions, float unit, float halfExtent) {
             glm::vec3(camPos.x, camPos.y, camPos.z),
             glm::vec3(camTarget.x, camTarget.y, camTarget.z),
             glm::vec3(0, 1, 0));
-        if (viewLoc != -1) CoreEngine::SetUniformMat4(gridShaderProg, "uView", view);
+        if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
         if (projLoc != -1) {
             int w = 1280, h = 720;
             GLFWwindow* win = s_window;
             if (win) glfwGetFramebufferSize(win, &w, &h);
-            CoreEngine::SetUniformMat4(gridShaderProg, "uProjection",
-                glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f));
+            glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(
+                glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f)));
         }
-        if (modelLoc != -1) CoreEngine::SetUniformMat4(gridShaderProg, "uModel", glm::mat4(1.0f));
+        if (modelLoc != -1) glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
 
         glLineWidth(1.0f);
         glBindVertexArray(gridVAO);
@@ -895,8 +897,8 @@ void DrawGrid(int divisions, float unit, float halfExtent) {
         glBindVertexArray(0);
 
         // Restore original shader
-        if (s_shaderProg) {
-            glUseProgram(s_shaderProg);
+        if (savedShader) {
+            glUseProgram(savedShader);
         }
     }
 }
@@ -1000,7 +1002,9 @@ void DrawSelectedObjectBounds() {
         boundsShaderInited = true;
     }
 
-    CoreEngine::UseShader(boundsShaderProg);
+    // Save the original program before switching
+    GLuint savedShader = s_shaderProg;
+    glUseProgram(boundsShaderProg);
     GLint viewLoc = glGetUniformLocation(boundsShaderProg, "uView");
     GLint projLoc = glGetUniformLocation(boundsShaderProg, "uProjection");
     GLint modelLoc = glGetUniformLocation(boundsShaderProg, "uModel");
@@ -1011,15 +1015,15 @@ void DrawSelectedObjectBounds() {
         glm::vec3(camPos.x, camPos.y, camPos.z),
         glm::vec3(camTarget.x, camTarget.y, camTarget.z),
         glm::vec3(0, 1, 0));
-    if (viewLoc != -1) CoreEngine::SetUniformMat4(boundsShaderProg, "uView", view);
+    if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     if (projLoc != -1) {
         int w = 1280, h = 720;
         GLFWwindow* win = s_window;
         if (win) glfwGetFramebufferSize(win, &w, &h);
-        CoreEngine::SetUniformMat4(boundsShaderProg, "uProjection",
-            glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(
+            glm::perspective(glm::radians(60.0f), (float)w / (float)h, 0.1f, 100.0f)));
     }
-    if (modelLoc != -1) CoreEngine::SetUniformMat4(boundsShaderProg, "uModel", glm::mat4(1.0f));
+    if (modelLoc != -1) glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
 
     glLineWidth(2.0f);
     glBindVertexArray(boundsVAO);
@@ -1029,7 +1033,8 @@ void DrawSelectedObjectBounds() {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    if (s_shaderProg) glUseProgram(s_shaderProg);
+    // Restore original shader
+    if (savedShader) glUseProgram(savedShader);
 }
 
 // ── Skybox ──────────────────────────────────────────────────────────
