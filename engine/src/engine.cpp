@@ -225,9 +225,11 @@ static void compileDefaultShader() {
     if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 }
 
+static bool s_primitivesBuilt = false;
+
 static void buildPrimitiveVAOs() {
-    // Drop template refs; GPU handles are freed when the last ref goes away
-    s_primitiveMeshes.clear();
+    if (s_primitivesBuilt) return;  // Build once — don't clear, or we destroy VAOs!
+    s_primitivesBuilt = true;
 
     // Build cube mesh data manually (not via CreateBox which is in namespace)
     CoreEngine::PrimitiveMesh cube;
@@ -431,7 +433,7 @@ GLFWwindow* GetWindow() { return s_window; }
 
 void RenderBegin() {
     glViewport(0, 0, s_width, s_height);
-    glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+    glClearColor(0.2f, 0.2f, 0.25f, 1.0f);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDepthMask(GL_TRUE);
@@ -482,7 +484,6 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    fprintf(stderr, "[SHADER FS SOURCE]\n%s\n[SHADER END]\n", fsSource);
     glShaderSource(fs, 1, &fsSource, nullptr);
     glCompileShader(fs);
     GLint fsSuccess;
