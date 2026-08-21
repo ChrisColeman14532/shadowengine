@@ -606,9 +606,16 @@ namespace Editor {
             model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
 
             CoreEngine::SetUniformMat4(prog, "uModel", model);
-            glm::vec3 color(0.4f + obj.position.x * 0.05f,
-                            0.4f + obj.position.y * 0.05f,
-                            0.4f + obj.position.z * 0.05f);
+            
+            // Use material base color if enabled, otherwise fall back to position-based color
+            glm::vec3 color;
+            if (obj.material.useMaterial) {
+                color = obj.material.baseColor;
+            } else {
+                color = glm::vec3(0.4f + obj.position.x * 0.05f,
+                                  0.4f + obj.position.y * 0.05f,
+                                  0.4f + obj.position.z * 0.05f);
+            }
             CoreEngine::SetUniformVec3(prog, "uColor", color);
 
             glBindVertexArray(mesh->VAO);
