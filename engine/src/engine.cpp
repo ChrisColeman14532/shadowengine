@@ -42,10 +42,15 @@ void main() {
     float diff = max(dot(normal, lightDir), 0.0);
     
     vec3 color = uColor;
-    if (color == vec3(0.0)) color = vec3(0.7f);
+    if (color == vec3(0.0)) color = vec3(0.8f);
     
-    vec3 ambient = vec3(0.5f) * color;
-    vec3 diffuse = diff * 0.5f * color;
+    vec3 ambient = vec3(0.6f) * color;
+    vec3 diffuse = diff * 0.4f * color;
+    
+    // Force white for testing
+    color = vec3(1.0);
+    
+    vec3 result = ambient + diffuse;
     
     vec3 result = ambient + diffuse;
     FragColor = vec4(result, 1.0);
