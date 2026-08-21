@@ -29,21 +29,8 @@ void main() {
 
 static const char* default_fs = R"(
 #version 330 core
-in vec3 vNormal;
-in vec2 vUV;
-
 out vec4 FragColor;
-
-uniform vec3 uColor;
-
-void main() {
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    vec3 normal = normalize(vNormal);
-    float diff = max(dot(normal, lightDir), 0.0);
-    
-    // Debug: hardcode white to test pipeline
-    FragColor = vec4(1.0, 1.0, 1.0, 1.0);
-}
+void main() { FragColor = vec4(0.7, 0.7, 0.7, 1.0); }
 )";
 
 // ── Material (textured) shader source ───────────────────────────────
@@ -495,6 +482,7 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    fprintf(stderr, "[SHADER FS SOURCE]\n%s\n[SHADER END]\n", fsSource);
     glShaderSource(fs, 1, &fsSource, nullptr);
     glCompileShader(fs);
     GLint fsSuccess;
