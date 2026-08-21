@@ -497,6 +497,7 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     glCompileShader(fs);
     GLint fsSuccess;
     glGetShaderiv(fs, GL_COMPILE_STATUS, &fsSuccess);
+    fprintf(stderr, "[SHADER DEBUG] Compiling fragment shader source:\n%s\n", fsSource);
     if (!fsSuccess) {
         GLint len;
         glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &len);
