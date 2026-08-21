@@ -431,7 +431,7 @@ GLFWwindow* GetWindow() { return s_window; }
 
 void RenderBegin() {
     glViewport(0, 0, s_width, s_height);
-    glClearColor(0.2f, 0.2f, 0.25f, 1.0f);
+    glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDepthMask(GL_TRUE);

@@ -522,8 +522,8 @@ namespace Editor {
 
         CoreEngine::RenderBegin();
 
-        // Draw skybox first (background)
-        CoreEngine::DrawSkybox();
+        // Draw skybox first (background) - DISABLED for debugging
+        // CoreEngine::DrawSkybox();
 
         auto& sceneObjs = CoreEngine::GetSceneObjectsWithMaterials();
 
@@ -594,6 +594,73 @@ namespace Editor {
         GLint projLoc = glGetUniformLocation(prog, "uProjection");
         if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
         if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
+
+        // DEBUG: Draw a tiny test cube directly (no VAO/VBO state issues)
+        {
+            float cubeData[] = {
+                // Front face
+                -0.25f, -0.25f,  0.25f,  0,0,1, 0,0,
+                 0.25f, -0.25f,  0.25f,  0,0,1, 1,0,
+                 0.25f,  0.25f,  0.25f,  0,0,1, 1,1,
+                -0.25f,  0.25f,  0.25f,  0,0,1, 0,1,
+                // Back face
+                -0.25f, -0.25f, -0.25f,  0,0,-1,0,0,
+                -0.25f,  0.25f, -0.25f,  0,0,-1,1,0,
+                 0.25f,  0.25f, -0.25f,  0,0,-1,1,1,
+                 0.25f, -0.25f, -0.25f,  0,0,-1,0,1,
+                // Top face
+                -0.25f,  0.25f,  0.25f,  0,1,0, 0,0,
+                 0.25f,  0.25f,  0.25f,  0,1,0, 1,0,
+                 0.25f,  0.25f, -0.25f,  0,1,0, 1,1,
+                -0.25f,  0.25f, -0.25f,  0,1,0, 0,1,
+                // Bottom face
+                -0.25f, -0.25f, -0.25f,  0,-1,0,0,0,
+                 0.25f, -0.25f, -0.25f,  0,-1,0,1,0,
+                 0.25f, -0.25f,  0.25f,  0,-1,0,1,1,
+                -0.25f, -0.25f,  0.25f,  0,-1,0,0,1,
+                // Right face
+                 0.25f, -0.25f,  0.25f,  1,0,0, 0,0,
+                 0.25f, -0.25f, -0.25f,  1,0,0, 1,0,
+                 0.25f,  0.25f, -0.25f,  1,0,0, 1,1,
+                 0.25f,  0.25f,  0.25f,  1,0,0, 0,1,
+                // Left face
+                -0.25f, -0.25f, -0.25f, -1,0,0, 0,0,
+                -0.25f, -0.25f,  0.25f, -1,0,0, 1,0,
+                -0.25f,  0.25f,  0.25f, -1,0,0, 1,1,
+                -0.25f,  0.25f, -0.25f, -1,0,0, 0,1,
+            };
+            // 6 faces * 2 triangles * 3 vertices = 36 vertices
+            GLuint testVAO, testVBO;
+            glGenVertexArrays(1, &testVAO);
+            glGenBuffers(1, &testVBO);
+            glBindVertexArray(testVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, testVBO);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(cubeData), cubeData, GL_DYNAMIC_DRAW);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+
+            // Disable culling and depth test for the test cube
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_DEPTH_TEST);
+            glBindVertexArray(testVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+            glBindVertexArray(0);
+            glDeleteVertexArrays(1, &testVAO);
+            glDeleteBuffers(1, &testVBO);
+            glEnable(GL_CULL_FACE);
+            glEnable(GL_DEPTH_TEST);
+
+            GLenum err = glGetError();
+            if (err != GL_NO_ERROR) {
+                fprintf(stderr, "[DEBUG] GL error after test cube draw: %u\n", err);
+            }
+        }
 
         for (auto& obj : sceneObjs) {
             auto& mesh = obj.mesh;
