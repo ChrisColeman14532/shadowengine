@@ -41,8 +41,11 @@ void main() {
     vec3 normal = normalize(vNormal);
     float diff = max(dot(normal, lightDir), 0.0);
     
-    vec3 ambient = vec3(0.5f) * uColor;
-    vec3 diffuse = diff * 0.5f * uColor;
+    vec3 color = uColor;
+    if (color == vec3(0.0)) color = vec3(0.7f);
+    
+    vec3 ambient = vec3(0.5f) * color;
+    vec3 diffuse = diff * 0.5f * color;
     
     vec3 result = ambient + diffuse;
     FragColor = vec4(result, 1.0);
@@ -485,10 +488,28 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vsSource, nullptr);
     glCompileShader(vs);
+    GLint vsSuccess;
+    glGetShaderiv(vs, GL_COMPILE_STATUS, &vsSuccess);
+    if (!vsSuccess) {
+        GLint len;
+        glGetShaderiv(vs, GL_INFO_LOG_LENGTH, &len);
+        char* log = (char*)alloca(len);
+        glGetShaderInfoLog(vs, len, nullptr, log);
+        fprintf(stderr, "VS compile error:\n%s\n", log);
+    }
 
     GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fs, 1, &fsSource, nullptr);
     glCompileShader(fs);
+    GLint fsSuccess;
+    glGetShaderiv(fs, GL_COMPILE_STATUS, &fsSuccess);
+    if (!fsSuccess) {
+        GLint len;
+        glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &len);
+        char* log = (char*)alloca(len);
+        glGetShaderInfoLog(fs, len, nullptr, log);
+        fprintf(stderr, "FS compile error:\n%s\n", log);
+    }
 
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vs);
@@ -504,6 +525,8 @@ GLuint CreateShaderProgram(const char* vsSource, const char* fsSource) {
         glGetProgramInfoLog(prog, len, nullptr, log);
         fprintf(stderr, "Program link error:\n%s\n", log);
     }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
 
     glDeleteShader(vs);
     glDeleteShader(fs);

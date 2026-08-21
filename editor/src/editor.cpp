@@ -589,6 +589,7 @@ namespace Editor {
         glfwGetFramebufferSize(window, &w, &h);
         glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, (float)w / (float)h);
         GLuint prog = CoreEngine::GetShaderProgram();
+        glUseProgram(prog);
         GLint viewLoc = glGetUniformLocation(prog, "uView");
         GLint projLoc = glGetUniformLocation(prog, "uProjection");
         if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
