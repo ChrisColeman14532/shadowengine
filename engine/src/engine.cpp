@@ -1169,8 +1169,8 @@ void CoreEngine::BindTexture(Texture& tex, GLuint unit) {
 Material CoreEngine::CreateDefaultMaterial() {
     return Material{
         "default",
-        glm::vec3(0.5f),  // base color
-        glm::vec3(0.0f),  // emissive
+        glm::vec3(0.7f, 0.7f, 0.7f),  // base color - mid gray
+        glm::vec3(0.0f, 0.0f, 0.0f),  // emissive
         0.0f,             // metallic
         1.0f,             // roughness
         1.0f,             // AO
