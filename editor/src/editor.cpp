@@ -599,6 +599,14 @@ namespace Editor {
             auto& mesh = obj.mesh;
             if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
+            static bool s_printed = false;
+            if (!s_printed) {
+                GLuint currentProg;
+                glGetIntegerv(GL_CURRENT_PROGRAM, (GLint*)&currentProg);
+                fprintf(stderr, "[DEBUG] currentProg=%u expectedProg=%u\n", currentProg, prog);
+                s_printed = true;
+            }
+
             glUseProgram(prog);
 
             glm::mat4 model = glm::mat4(1.0f);
