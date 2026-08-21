@@ -636,28 +636,10 @@ namespace Editor {
 
         // DEBUG: Draw a simple white triangle to test shader pipeline
         {
-            static GLuint triVAO = 0;
-            static GLuint triVBO = 0;
-            if (triVAO == 0) {
-                // Try to get it from engine
-                triVAO = 100; // placeholder
-            }
-            glUseProgram(prog);
-            GLint loc = glGetUniformLocation(prog, "uModel");
-            if (loc != -1) {
-                glm::mat4 model = glm::mat4(1.0f);
-                model = glm::translate(model, glm::vec3(2.0f, 0.5f, 0.0f));
-                glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(model));
-            }
-            loc = glGetUniformLocation(prog, "uView");
-            if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(view));
-            loc = glGetUniformLocation(prog, "uProjection");
-            if (loc != -1) glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(projection));
-            // Just draw a quad with known vertices
             float triVerts[] = {
-                2.0f,  0.5f,  0.0f,   0,0,1,  0,0,
-               1.7f, -0.5f,  0.0f,   0,0,1,  1,0,
-               2.3f, -0.5f,  0.0f,   0,0,1,  0,1,
+                 0.0f,  1.0f,  0.0f,   0,0,1,  0,0,
+                -1.0f, -1.0f,  0.0f,   0,0,1,  1,0,
+                 1.0f, -1.0f,  0.0f,   0,0,1,  0,1,
             };
             GLuint tVAO, tVBO;
             glGenVertexArrays(1, &tVAO);
@@ -673,15 +655,30 @@ namespace Editor {
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
             glBindVertexArray(0);
 
+            // Position camera in front of triangle
+            CoreEngine::SetCameraPosition(CoreEngine::Vector3(0, 0, 5));
+            CoreEngine::SetCameraTarget(CoreEngine::Vector3(0, 0, 0));
+            auto cp = CoreEngine::GetCameraPosition();
+            auto ct = CoreEngine::GetCameraTarget();
+            glm::mat4 view = glm::lookAt(glm::vec3(cp.x, cp.y, cp.z), glm::vec3(ct.x, ct.y, ct.z), glm::vec3(0, 1, 0));
+
             // Disable depth test to see if anything renders at all
             glDisable(GL_DEPTH_TEST);
+            glUseProgram(prog);
+            GLint viewLoc = glGetUniformLocation(prog, "uView");
+            GLint projLoc = glGetUniformLocation(prog, "uProjection");
+            if (viewLoc != -1) glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+            if (projLoc != -1) glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+            GLint modelLoc = glGetUniformLocation(prog, "uModel");
+            if (modelLoc != -1) glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+
             glBindVertexArray(tVAO);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0);
             glDeleteVertexArrays(1, &tVAO);
             glDeleteBuffers(1, &tVBO);
             glEnable(GL_DEPTH_TEST);
-            fprintf(stderr, "[DEBUG] Rendered white test triangle\n");
+            fprintf(stderr, "[DEBUG] Rendered white test triangle at origin\n");
         }
 
         // Draw grid on the ground
