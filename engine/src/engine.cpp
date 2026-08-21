@@ -41,19 +41,8 @@ void main() {
     vec3 normal = normalize(vNormal);
     float diff = max(dot(normal, lightDir), 0.0);
     
-    vec3 color = uColor;
-    if (color == vec3(0.0)) color = vec3(0.8f);
-    
-    vec3 ambient = vec3(0.6f) * color;
-    vec3 diffuse = diff * 0.4f * color;
-    
-    // Force white for testing
-    color = vec3(1.0);
-    
-    vec3 result = ambient + diffuse;
-    
-    vec3 result = ambient + diffuse;
-    FragColor = vec4(result, 1.0);
+    // Debug: hardcode white to test pipeline
+    FragColor = vec4(1.0, 1.0, 1.0, 1.0);
 }
 )";
 
@@ -258,6 +247,7 @@ static void buildPrimitiveVAOs() {
     cube.name = "cube";
     cube.indexCount = 36;
 
+    // Simple 24-vertex cube with interleaved pos/normal/uv (NO EBO)
     static const float cubeVerts[] = {
         // Front face (+Z)
         -0.5f, -0.5f,  0.5f,   0,0,1,  0,0,
@@ -291,23 +281,16 @@ static void buildPrimitiveVAOs() {
         -0.5f,  0.5f, -0.5f,  -1,0,0,  0,1,
     };
     static const GLuint cubeIndices[] = {
-        // Front (+Z): CCW from +Z
-        0,1,2, 0,2,3,
-        // Back (-Z): CCW from -Z
-        4,6,5, 4,7,6,
-        // Top (+Y): CCW from +Y
-        8,9,10, 8,10,11,
-        // Bottom (-Y): CCW from -Y
-        12,13,14, 12,14,15,
-        // Right (+X): CCW from +X
-        16,17,18, 16,18,19,
-        // Left (-X): CCW from -X
-        20,22,21, 20,23,22
+        0,1,2, 0,2,3,       // front
+        4,6,5, 4,7,6,       // back
+        8,9,10, 8,10,11,    // top
+        12,13,14, 12,14,15, // bottom
+        16,17,18, 16,18,19, // right
+        20,21,22, 20,22,23  // left
     };
 
     glGenVertexArrays(1, &cube.VAO);
     glGenBuffers(1, &cube.VBO);
-    glGenBuffers(1, &cube.EBO);
     glBindVertexArray(cube.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, cube.VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
@@ -317,10 +300,16 @@ static void buildPrimitiveVAOs() {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*3));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)(sizeof(float)*6));
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cube.EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    // Store indices in a static buffer
+    static GLuint cubeEBO = 0;
+    if (cubeEBO == 0) {
+        glGenBuffers(1, &cubeEBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubeEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
+    }
+    cube.EBO = cubeEBO;
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
 
