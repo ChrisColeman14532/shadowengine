@@ -80,6 +80,7 @@ namespace Editor {
         glfwGetFramebufferSize(win, &w, &h);
 
         CoreEngine::ClearSceneWithMaterials();
+        CoreEngine::CreateCameraObject();  // Restore camera after clearing scene
 
         auto groundMesh = CoreEngine::GetPrimitiveMesh("plane");
         auto groundMat = CoreEngine::CreateDefaultMaterial();

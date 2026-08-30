@@ -838,12 +838,14 @@ SceneObject& AddToScene(const std::string& name, MeshPtr mesh) {
 
 void ClearScene() {
     s_selectedObjectId = 0;
+    s_cameraObjectId = 0;  // Reset so camera gets recreated on next CreateCameraObject()
     s_sceneObjects.clear();
     s_sceneObjectsWithMat.clear();
 }
 
 void ClearSceneWithMaterials() {
     s_selectedObjectId = 0;
+    s_cameraObjectId = 0;  // Reset so camera gets recreated on next CreateCameraObject()
     s_sceneObjectsWithMat.clear();
 }
 
