@@ -41,6 +41,7 @@ namespace CoreEngine {
         GLuint VBO = 0;
         GLuint EBO = 0;
         uint32_t indexCount = 0;
+        Vector3 halfExtent = {1.0f, 1.0f, 1.0f};  // AABB half-extents for bounding wireframe
     };
 
     // Raw mesh data (used by FBX loader for merging)
@@ -120,6 +121,7 @@ namespace CoreEngine {
     // Camera (orbit-style)
     void SetCameraPosition(Vector3 pos);
     void SetCameraTarget(Vector3 target);
+    void ResetCamera(); // Reset to initial default camera state
     void SetCameraDirection(Vector3 dir);
     Vector3 GetCameraPosition();
     Vector3 GetCameraTarget();
@@ -134,14 +136,14 @@ namespace CoreEngine {
     MeshPtr GetPrimitiveMesh(const char* name);
 
     // 3D grid rendering
-    void DrawGrid(int divisions = 20, float unit = 1.0f, float halfExtent = 10.0f);
+    void DrawGrid(int divisions, float unit, float halfExtent, const glm::mat4& view, const glm::mat4& projection);
 
     // Bounding box wireframe for selected object
-    void DrawSelectedObjectBounds();
+    void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection);
 
     // Skybox (procedural gradient with sun)
     void InitSkybox();
-    void DrawSkybox();
+    void DrawSkybox(float aspect = 1280.0f / 720.0f);
 
     // ── Textures ────────────────────────────────────────────────────
 
@@ -179,6 +181,42 @@ namespace CoreEngine {
     std::vector<SceneObjectWithMaterial>& GetSceneObjectsWithMaterials();
     SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat);
 
+    // ── Camera (as a scene object) ──────────────────────────────────
+    uint32_t GetCameraObjectId();
+    void SetCameraId(uint32_t id);
+    bool IsCameraObjectId(uint32_t id);
+    void CreateCameraObject();          // create camera visual in scene
+    void SyncSceneToCameraObject();     // editor: pull object pos → orbit camera
+
+    // ── Shadow Mapping ──────────────────────────────────────────────
+
+    struct ShadowMap {
+        GLuint fbo = 0;
+        GLuint depthTexture = 0;
+        GLuint depthRenderbuffer = 0;
+        int width = 2048;
+        int height = 2048;
+        bool inited = false;
+    };
+
+    // Light direction in world space (normalized)
+    void SetShadowLightDirection(Vector3 dir);
+    Vector3 GetShadowLightDirection();
+    glm::mat4 GetLightViewMatrix();
+    glm::mat4 GetLightProjectionMatrix();
+    glm::mat4 GetLightSpaceMatrix();
+
+    // Shadow map initialization / rendering
+    void InitShadowMap(int width = 2048, int height = 2048);
+    void DrawShadowPass();          // Render scene to shadow map
+    void DrawShadowPassWithMaterials();
+    void CleanupShadowMap();        // Free shadow map FBO + texture
+
+    // Get the shadow map for use in shaders
+    GLuint GetShadowMapTexture();
+    GLuint GetShadowMapFBO();
+
+    // ── Scene object with material ──────────────────────────────────
 
 
 } // namespace CoreEngine

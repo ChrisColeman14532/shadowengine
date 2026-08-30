@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "core/engine.h"
 #include "core/asset_loader.h"
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -11,16 +12,29 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <cstdio>
-
 #if defined(_WIN32)
 #include <windows.h>
 #endif
 
+
+
 static std::string g_lastLoadedFBX;
 static bool g_showSceneHierarchy = true;
 static bool g_showInspector = true;
-static bool g_showStatusBar = true;
+static bool g_showStatusBar = false;
 static bool g_triggerFileDialog = false;
+static bool g_showShadows = false;  // DISABLED for debugging
+
+// Console log storage
+static std::vector<std::string> g_consoleLog;
+static std::string   g_consoleText; // assembled text for copy
+
+static void ConsoleLog(const std::string& msg) {
+    g_consoleLog.push_back(msg);
+    if (g_consoleLog.size() > 1000) g_consoleLog.erase(g_consoleLog.begin());
+}
+
+
 
 // Orbit camera state
 static double g_prevMouseX = 0;
@@ -92,40 +106,59 @@ namespace Editor {
         if (dist < 5.0f) dist = 5.0f;
         glm::vec3 camPos(modelCenter.x, modelCenter.y + dist * 0.3f, modelCenter.z - dist);
         CoreEngine::SetCameraPosition({camPos.x, camPos.y, camPos.z});
-        CoreEngine::SetCameraTarget({modelCenter.x, modelCenter.y, modelCenter.z});
     }
 
     static void RenderSceneHierarchy() {
         ImVec2 mainSize = ImGui::GetMainViewport()->Size;
         ImVec2 mainPos = ImGui::GetMainViewport()->Pos;
-        float frameH = ImGui::GetFrameHeight();
-        ImVec2 workPos(mainPos.x, mainPos.y + frameH * 3);
-        ImVec2 workSize(mainSize.x, mainSize.y - frameH * 4);
-        ImVec2 panelSize(280, workSize.y * 0.55f);
 
-        ImGui::SetNextWindowPos(workPos);
-        ImGui::SetNextWindowSize(panelSize);
+        const float menuBarH = 28.0f;
+        const float consoleH = 150.0f;
+        const float panelH = mainSize.y - menuBarH - consoleH;
+
+        ImGui::SetNextWindowPos(ImVec2(mainPos.x + 0, mainPos.y + menuBarH));
+        ImGui::SetNextWindowSize(ImVec2(280, panelH));
         if (ImGui::Begin("Scene Hierarchy", nullptr)) {
-            if (ImGui::Button("Add Cube", ImVec2(-1, 0))) {
-                auto mesh = CoreEngine::GetPrimitiveMesh("cube");
-                if (mesh) {
-                    auto mat = CoreEngine::CreateDefaultMaterial();
-                    mat.name = "cube_material";
-                    auto& obj = CoreEngine::AddToSceneWithMaterial("cube_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh, mat);
-                    obj.position = {0, 0.5f, 0};
-                    obj.scale = {1, 1, 1};
+            // ── Add Object Dropdown ─────────────────────────────────────
+            static const char* addItemOptions[] = {"Add Cube", "Add Plane", "Add Camera"};
+            static int selectedItem = -1;
+
+            if (ImGui::Combo("##addItem", &selectedItem, addItemOptions, IM_ARRAYSIZE(addItemOptions))) {
+                auto meshCube = CoreEngine::GetPrimitiveMesh("cube");
+                auto meshPlane = CoreEngine::GetPrimitiveMesh("plane");
+                auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                uint32_t nextId = CoreEngine::GetNextSceneObjectId();
+
+                switch (selectedItem) {
+                    case 0: { // Add Cube
+                        if (meshCube) {
+                            auto mat = CoreEngine::CreateDefaultMaterial();
+                            mat.name = "cube_material";
+                            auto& obj = CoreEngine::AddToSceneWithMaterial("cube_" + std::to_string(nextId), meshCube, mat);
+                            obj.position = {0, 0, 0};
+                            obj.scale = {1, 1, 1};
+                            ConsoleLog("Added cube");
+                        }
+                        break;
+                    }
+                    case 1: { // Add Plane
+                        if (meshPlane) {
+                            auto mat = CoreEngine::CreateDefaultMaterial();
+                            mat.name = "plane_material";
+                            auto& obj = CoreEngine::AddToSceneWithMaterial("plane_" + std::to_string(nextId), meshPlane, mat);
+                            obj.position = {0, -1.0f, 0};
+                            obj.scale = {10, 1, 10};
+                            ConsoleLog("Added plane");
+                        }
+                        break;
+                    }
+                    case 2: { // Add Camera
+                        CoreEngine::CreateCameraObject();
+                        ConsoleLog("Added camera");
+                        break;
+                    }
                 }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Add Plane", ImVec2(-1, 0))) {
-                auto mesh = CoreEngine::GetPrimitiveMesh("plane");
-                if (mesh) {
-                    auto mat = CoreEngine::CreateDefaultMaterial();
-                    mat.name = "plane_material";
-                    auto& obj = CoreEngine::AddToSceneWithMaterial("plane_" + std::to_string(CoreEngine::GetNextSceneObjectId()), mesh, mat);
-                    obj.position = {0, -1.0f, 0};
-                    obj.scale = {10, 1, 10};
-                }
+                selectedItem = -1; // Reset dropdown
             }
 
             ImGui::Separator();
@@ -137,38 +170,39 @@ namespace Editor {
             if (scene.empty()) {
                 ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "No objects in scene");
             } else {
+                // Track which object to rename (popup must be handled OUTSIDE the loop)
+                static CoreEngine::SceneObjectWithMaterial* g_renameObj = nullptr;
+
                 for (auto& obj : scene) {
                     bool isSelected = (obj.id == selectedId);
-                    
+
                     ImGui::PushID((int)obj.id);
                     const char* label = obj.name.c_str();
-                    bool was_selected = ImGui::Selectable(label, isSelected, ImGuiSelectableFlags_AllowItemOverlap);
-                    
+                    bool was_selected = ImGui::Selectable(label, isSelected);
+
                     if (was_selected) {
                         CoreEngine::SelectObject(obj.id);
                     }
 
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        static char rename_buf[256];
-                        strncpy(rename_buf, obj.name.c_str(), sizeof(rename_buf) - 1);
-                        rename_buf[sizeof(rename_buf) - 1] = '\0';
+                        g_renameObj = &obj;
                         ImGui::OpenPopup("Rename");
-
-                        // Center camera on double-clicked object
-                        CoreEngine::SetCameraTarget({obj.position.x, obj.position.y, obj.position.z});
-                    }
-
-                    if (ImGui::BeginPopup("Rename")) {
-                        static char buf[256];
-                        strncpy(buf, obj.name.c_str(), sizeof(buf) - 1);
-                        buf[sizeof(buf) - 1] = '\0';
-                        if (ImGui::InputText("##name", buf, sizeof(buf))) {
-                            obj.name = buf;
-                        }
-                        ImGui::EndPopup();
+                        // Select object on double-click too
+                        CoreEngine::SelectObject(obj.id);
                     }
 
                     ImGui::PopID();
+                }
+
+                // Handle rename popup ONCE per frame (must be outside the loop)
+                if (ImGui::BeginPopup("Rename") && g_renameObj) {
+                    static char buf[256];
+                    strncpy(buf, g_renameObj->name.c_str(), sizeof(buf) - 1);
+                    buf[sizeof(buf) - 1] = '\0';
+                    if (ImGui::InputText("##name", buf, sizeof(buf))) {
+                        g_renameObj->name = buf;
+                    }
+                    ImGui::EndPopup();
                 }
             }
 
@@ -176,6 +210,7 @@ namespace Editor {
             if (ImGui::Button("Clear Scene", ImVec2(-1, 0))) {
                 CoreEngine::ClearSceneWithMaterials();
                 CoreEngine::GetSceneObjectsWithMaterials().clear();
+                ConsoleLog("Scene cleared");
             }
         }
         ImGui::End();
@@ -184,14 +219,14 @@ namespace Editor {
     static void RenderInspector() {
         ImVec2 mainSize = ImGui::GetMainViewport()->Size;
         ImVec2 mainPos = ImGui::GetMainViewport()->Pos;
-        float frameH = ImGui::GetFrameHeight();
-        ImVec2 workPos(mainPos.x, mainPos.y + frameH * 3);
-        ImVec2 workSize(mainSize.x, mainSize.y - frameH * 4);
-        ImVec2 panelSize(320, workSize.y * 0.55f);
 
-        ImVec2 inspectorPos(workPos.x + 280, workPos.y);
+        const float menuBarH = 28.0f;
+        const float consoleH = 150.0f;
+        const float panelH = mainSize.y - menuBarH - consoleH;
+
+        ImVec2 inspectorPos = ImVec2(mainPos.x + mainSize.x - 320, mainPos.y + menuBarH);
         ImGui::SetNextWindowPos(inspectorPos);
-        ImGui::SetNextWindowSize(panelSize);
+        ImGui::SetNextWindowSize(ImVec2(320, panelH));
         if (ImGui::Begin("Inspector", nullptr)) {
             auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
             uint32_t selectedId = CoreEngine::GetSelectedObjectId();
@@ -204,11 +239,64 @@ namespace Editor {
                 }
             }
 
+            // ── Camera object selected ──────────────────────────────────
+            bool isCamera = CoreEngine::IsCameraObjectId(selectedId);
+
             if (!selected) {
                 ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "No object selected");
                 ImGui::Separator();
+            } else if (isCamera) {
+                // Camera-specific inspector
+                char name_buf[256];
+                strncpy(name_buf, selected->name.c_str(), sizeof(name_buf) - 1);
+                name_buf[sizeof(name_buf) - 1] = '\0';
+                ImGui::TextColored(ImVec4(0.2f, 0.7f, 1.0f, 1.0f), "Camera");
+                ImGui::InputText("##name", name_buf, sizeof(name_buf));
+                if (ImGui::IsItemDeactivatedAfterEdit()) selected->name = name_buf;
+
+                ImGui::Separator();
+                ImGui::Text("Position");
+                static float camPos[3] = {0, 1.5f, 5};
+                // Keep input in sync with object position
+                camPos[0] = selected->position.x;
+                camPos[1] = selected->position.y;
+                camPos[2] = selected->position.z;
+                if (ImGui::InputFloat3("##pos", camPos, "%0.2f")) {
+                    if (camPos[0] != selected->position.x || camPos[1] != selected->position.y || camPos[2] != selected->position.z) {
+                        selected->position = {camPos[0], camPos[1], camPos[2]};
+                        // Update orbit camera to follow
+                        CoreEngine::SyncSceneToCameraObject();
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::Text("Scale");
+                static float camScale[3] = {0.3f, 0.3f, 0.3f};
+                camScale[0] = selected->scale.x;
+                camScale[1] = selected->scale.y;
+                camScale[2] = selected->scale.z;
+                if (ImGui::InputFloat3("##scale", camScale, "%0.2f")) {
+                    selected->scale = {camScale[0], camScale[1], camScale[2]};
+                }
+
+                ImGui::Separator();
+                ImGui::Text("Light Dir");
+                static float lightDir[3] = {0.5f, 1.0f, 0.3f};
+                if (ImGui::SliderFloat3("##lightDir", lightDir, -2.0f, 2.0f)) {
+                    float len = sqrtf(lightDir[0]*lightDir[0] + lightDir[1]*lightDir[1] + lightDir[2]*lightDir[2]);
+                    if (len > 0.001f) CoreEngine::SetShadowLightDirection({lightDir[0]/len, lightDir[1]/len, lightDir[2]/len});
+                }
+
+                ImGui::Separator();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Delete Camera", ImVec2(-1, 0))) {
+                    // Can't delete camera, just deselect
+                    CoreEngine::SelectObject(0);
+                }
+                ImGui::PopStyleColor();
+
             } else {
-                // Object name
+                // Regular object inspector
                 char name_buf[256];
                 strncpy(name_buf, selected->name.c_str(), sizeof(name_buf) - 1);
                 name_buf[sizeof(name_buf) - 1] = '\0';
@@ -219,6 +307,9 @@ namespace Editor {
                 ImGui::Separator();
                 ImGui::Text("Transform");
                 ImGui::PushID((int)selected->id);
+
+                // When camera object moved via inspector, update orbit camera
+                if (isCamera) CoreEngine::SyncSceneToCameraObject();
 
                 ImGui::InputFloat3("Position", &selected->position.x);
                 ImGui::Spacing();
@@ -340,28 +431,72 @@ namespace Editor {
         ImGui::End();
     }
 
-    static void RenderStatusBar() {
+    static void RenderConsole() {
         ImVec2 mainSize = ImGui::GetMainViewport()->Size;
         ImVec2 mainPos = ImGui::GetMainViewport()->Pos;
-        float barH = 30;
-        ImVec2 barPos(mainPos.x, mainPos.y + mainSize.y - barH);
-        ImVec2 barSize(mainSize.x, barH);
 
-        ImGui::SetNextWindowPos(barPos);
-        ImGui::SetNextWindowSize(barSize);
-        if (ImGui::Begin("StatusBar", nullptr,
-            ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoInputs)) {
-            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
-            char fpsText[128];
-            snprintf(fpsText, sizeof(fpsText), "ShadowEngine v0.2 | Objects: %d | FPS: %.1f | T - Toggle Material Mode",
-                (int)scene.size(), ImGui::GetIO().Framerate);
-            ImGui::Text(fpsText);
-            ImGui::SameLine(ImGui::GetWindowWidth() - 200);
-            ImGui::Text("L - Load FBX | W/A/S/D - Rotate selected | Mouse drag - Orbit");
+        const float consoleH = 150.0f;
+        static char commandInput[256] = "";
+        static bool atTop = true;
+        static float copyTime = 0.0f;
+
+        // Build full text for clipboard copy
+        g_consoleText.clear();
+        for (const auto& log : g_consoleLog) {
+            g_consoleText += log + "\n";
+        }
+
+        ImVec2 consolePos = ImVec2(mainPos.x, mainPos.y + mainSize.y - consoleH);
+        ImGui::SetNextWindowPos(consolePos);
+        ImGui::SetNextWindowSize(ImVec2(mainSize.x, consoleH));
+        if (ImGui::Begin("Console", nullptr,
+                ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings)) {
+
+            // Copy button + status
+            if (ImGui::Button("Copy", ImVec2(70, 0))) {
+                if (!g_consoleText.empty() && ImGui::GetClipboardText()) {
+                    ImGui::SetClipboardText(g_consoleText.c_str());
+                    copyTime = ImGui::GetTime();
+                }
+            }
+            float elapsed = ImGui::GetTime() - copyTime;
+            if (elapsed < 1.5f) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f - elapsed * 0.5f), "Copied!");
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Ctrl+C");
+            ImGui::SameLine();
+            ImGui::TextDisabled("Scroll: free");
+
+            // Scrollable log area
+            ImGui::BeginChild("##logArea", ImVec2(0, -30), true);
+
+            for (const auto& log : g_consoleLog) {
+                ImGui::TextUnformatted(log.c_str());
+            }
+
+            // Stay at top by default; if user scrolls away, let them scroll freely
+            if (atTop) {
+                ImGui::SetScrollY(0.0f);
+            }
+            // Detect user scrolling away from top
+            if (ImGui::GetScrollY() > 3.0f) {
+                atTop = false;
+            }
+
+            ImGui::EndChild();
+
+            // Command input at bottom
+            if (ImGui::InputText("##command", commandInput, sizeof(commandInput), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                if (strlen(commandInput) > 0) {
+                    ConsoleLog(">> " + std::string(commandInput));
+                    commandInput[0] = '\0';
+                }
+            }
         }
         ImGui::End();
     }
@@ -385,7 +520,12 @@ namespace Editor {
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Scene Hierarchy", nullptr, &g_showSceneHierarchy);
                 ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
-                ImGui::MenuItem("Status Bar", nullptr, &g_showStatusBar);
+                ImGui::MenuItem("Console", nullptr, &g_showStatusBar);
+                ImGui::MenuItem("Shadows", nullptr, &g_showShadows);
+                if (ImGui::MenuItem("Reset Camera", "Home")) {
+                    CoreEngine::ResetCamera();
+                    ConsoleLog("Camera reset to default position");
+                }
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
@@ -398,7 +538,33 @@ namespace Editor {
             RenderInspector();
         }
         if (g_showStatusBar) {
-            RenderStatusBar();
+            RenderConsole();
+        }
+
+        // ── Shadow Settings Panel ──────────────────────────────────────
+        {
+            ImVec2 sMainSize = ImGui::GetMainViewport()->Size;
+            ImVec2 sMainPos  = ImGui::GetMainViewport()->Pos;
+            const float sMenuBarH = 28.0f;
+            const float sConsoleH = 150.0f;
+            const float sPanelH = sMainSize.y - sMenuBarH - sConsoleH;
+
+            ImVec2 shadowPos = ImVec2(sMainPos.x + sMainSize.x - 320, sMainPos.y + sMenuBarH + sPanelH - 130);
+            ImGui::SetNextWindowPos(shadowPos);
+            ImGui::SetNextWindowSize(ImVec2(320, 130));
+            if (ImGui::Begin("Shadow Settings", nullptr, ImGuiWindowFlags_NoCollapse)) {
+                ImGui::Checkbox("Enable Shadows", &g_showShadows);
+                ImGui::Separator();
+                ImGui::Text("Light Direction");
+                static float lightDir[3] = {0.5f, 1.0f, 0.3f};
+                if (ImGui::SliderFloat3("##lightDir", lightDir, -2.0f, 2.0f)) {
+                    float len = sqrtf(lightDir[0]*lightDir[0] + lightDir[1]*lightDir[1] + lightDir[2]*lightDir[2]);
+                    if (len > 0.001f) {
+                        CoreEngine::SetShadowLightDirection({lightDir[0]/len, lightDir[1]/len, lightDir[2]/len});
+                    }
+                }
+                ImGui::End();
+            }
         }
 
         ImGui::Render();
@@ -425,6 +591,9 @@ namespace Editor {
     }
 
     GLFWwindow* Init() {
+        // Redirect stdout/stderr into the console window
+
+
         CoreEngine::Init();
 
         std::string name = CoreEngine::GetEngineName();
@@ -441,6 +610,7 @@ namespace Editor {
         }
 
         std::cout << "[Editor] OpenGL window created (" << width << "x" << height << ")" << std::endl;
+        ConsoleLog("OpenGL window created (" + std::to_string(width) + "x" + std::to_string(height) + ")");
 
         CoreEngine::EngineInfo info = CoreEngine::GetEngineInfo(width, height);
         std::cout << "[Editor] Engine communication OK - \"" << info.name 
@@ -451,25 +621,52 @@ namespace Editor {
         // Initialize skybox
         CoreEngine::InitSkybox();
 
+        // Initialize shadow mapping
+        CoreEngine::InitShadowMap(2048, 2048);
+
+        // Create camera as a scene object
+        CoreEngine::CreateCameraObject();
+
         glfwSetInputMode(CoreEngine::GetWindow(), GLFW_REPEAT, GLFW_TRUE);
         glfwFocusWindow(CoreEngine::GetWindow());
 
+        glfwSetCharCallback(CoreEngine::GetWindow(), [](GLFWwindow* w, unsigned int codepoint) {
+            ImGui_ImplGlfw_CharCallback(w, codepoint);
+        });
+
         glfwSetKeyCallback(CoreEngine::GetWindow(), [](GLFWwindow* w, int key, int scancode, int action, int mods) {
-            if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-                float speed = 0.05f;
-                auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
-                uint32_t selectedId = CoreEngine::GetSelectedObjectId();
-                for (auto& obj : scene) {
-                    if (obj.id == selectedId && obj.name.find("cube") != std::string::npos) {
-                        if (key == GLFW_KEY_A) obj.rotation.y += speed;
-                        if (key == GLFW_KEY_D) obj.rotation.y -= speed;
-                        if (key == GLFW_KEY_S) obj.rotation.x += speed;
-                        if (key == GLFW_KEY_W) obj.rotation.x -= speed;
-                    }
+            // Feed keys to ImGui first
+            ImGui_ImplGlfw_KeyCallback(w, key, scancode, action, mods);
+
+            // Ctrl+C: copy console text to clipboard
+            if (action == GLFW_PRESS && key == GLFW_KEY_C && (mods & GLFW_MOD_CONTROL)) {
+                if (!g_consoleText.empty()) {
+                    ImGui::SetClipboardText(g_consoleText.c_str());
+                    ConsoleLog("Console copied to clipboard");
                 }
             }
-            if ((key == GLFW_KEY_L) && action == GLFW_PRESS) {
-                g_triggerFileDialog = true;
+
+            if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+                if (!ImGui::GetIO().WantCaptureKeyboard) {
+                    float speed = 0.05f;
+                    auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                    uint32_t selectedId = CoreEngine::GetSelectedObjectId();
+                    for (auto& obj : scene) {
+                        if (obj.id == selectedId && obj.name.find("cube") != std::string::npos) {
+                            if (key == GLFW_KEY_A) obj.rotation.y += speed;
+                            if (key == GLFW_KEY_D) obj.rotation.y -= speed;
+                            if (key == GLFW_KEY_S) obj.rotation.x += speed;
+                            if (key == GLFW_KEY_W) obj.rotation.x -= speed;
+                        }
+                    }
+                }
+                if (key == GLFW_KEY_L) {
+                    g_triggerFileDialog = true;
+                }
+                if (key == GLFW_KEY_HOME) {
+                    CoreEngine::ResetCamera();
+                    ConsoleLog("Camera reset to default position");
+                }
             }
         });
 
@@ -492,6 +689,8 @@ namespace Editor {
 
         glfwSetScrollCallback(win, [](GLFWwindow* w, double dx, double dy) {
             ImGui_ImplGlfw_ScrollCallback(w, dx, dy);
+            // Don't zoom camera if ImGui is using the scroll (e.g. console scroll)
+            if (ImGui::GetIO().WantCaptureMouse) return;
             auto offset = CoreEngine::GetCameraOffset();
             float zoom = 1.0f + (float)dy * 0.05f;
             if (zoom < 0.1f) zoom = 0.1f;
@@ -506,6 +705,7 @@ namespace Editor {
     }
 
     void ShutDown(GLFWwindow* window) {
+        CoreEngine::CleanupShadowMap();
         CoreEngine::ClearSceneWithMaterials();
         ShutdownImGui();
     }
@@ -520,30 +720,39 @@ namespace Editor {
             LoadFBXFromFileDialog(window);
         }
 
+
+
+        // Get window size for viewport
+        int windowW = 1280, windowH = 720;
+        glfwGetFramebufferSize(window, &windowW, &windowH);
+
+        const float menuBarH = 28.0f;
+        const float consoleH = 150.0f;
+        const float leftPanelW = 280.0f;
+        const float rightPanelW = 320.0f;
+
+        // Only reserve console space when it's visible
+        int panelBottomH = g_showStatusBar ? (int)consoleH : 0;
+
+        int vpX = (int)leftPanelW;
+        int vpY = (int)menuBarH;
+        int vpW = windowW - (int)leftPanelW - (int)rightPanelW;
+        int vpH = windowH - (int)menuBarH - panelBottomH;
+        if (vpW < 1) vpW = windowW;
+        if (vpH < 1) vpH = windowH;
+        // Prevent zero aspect ratio
+        float aspect = (float)vpW / (float)vpH;
+        if (aspect <= 0.0f) aspect = 1.333f; // 16:10 fallback
+
         CoreEngine::RenderBegin();
 
-        // Draw skybox first (background)
-        CoreEngine::DrawSkybox();
+        // Set viewport for 3D rendering (center area only)
+        glViewport(vpX, vpY, vpW, vpH);
+
+        // Draw skybox first (background) - pass viewport aspect ratio
+        CoreEngine::DrawSkybox(aspect);
 
         auto& sceneObjs = CoreEngine::GetSceneObjectsWithMaterials();
-
-        // Check for ground and create if missing
-        bool hasGround = false;
-        for (const auto& obj : sceneObjs) {
-            if (obj.name == "ground") { hasGround = true; break; }
-        }
-        if (!hasGround) {
-            auto planeMesh = CoreEngine::GetPrimitiveMesh("plane");
-            if (planeMesh) {
-                auto groundMat = CoreEngine::CreateDefaultMaterial();
-                groundMat.name = "ground_material";
-                groundMat.baseColor = glm::vec3(0.3f, 0.3f, 0.25f);
-                CoreEngine::AddToSceneWithMaterial("ground", planeMesh, groundMat);
-                auto& plane = CoreEngine::GetSceneObjectsWithMaterials().back();
-                plane.position = {0, -1.0f, 0};
-                plane.scale = {10, 1, 10};
-            }
-        }
 
         auto cameraPos = CoreEngine::GetCameraPosition();
         auto cameraTarget = CoreEngine::GetCameraTarget();
@@ -584,16 +793,61 @@ namespace Editor {
         glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
         glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
 
-        // Draw scene objects
-        int w = 1280, h = 720;
-        glfwGetFramebufferSize(window, &w, &h);
-        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, (float)w / (float)h);
+        // Get projection matrix using actual viewport dimensions
+        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, aspect);
+
+
+
+        // DISABLED shadow pass for debugging
+        // CoreEngine::DrawShadowPass();
+
+        // ── Main Pass: Render with shadow mapping ──────────────────────
         GLuint prog = CoreEngine::GetShaderProgram();
         glUseProgram(prog);
         GLint viewLoc = glGetUniformLocation(prog, "uView");
         GLint projLoc = glGetUniformLocation(prog, "uProjection");
         if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
         if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
+
+        // Set shadow mapping uniforms (only when shadows are enabled)
+        if (g_showShadows) {
+            GLuint shadowTex = CoreEngine::GetShadowMapTexture();
+            GLint shadowMapLoc = glGetUniformLocation(prog, "uShadowMap");
+            GLint hasShadowLoc = glGetUniformLocation(prog, "uHasShadowMap");
+            if (hasShadowLoc != -1) glUniform1i(hasShadowLoc, 1);
+            if (shadowMapLoc != -1) {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, shadowTex);
+                glUniform1i(shadowMapLoc, 0);
+            }
+
+            // Light space matrix
+            glm::mat4 lightSpaceMat = CoreEngine::GetLightSpaceMatrix();
+            GLint lsmLoc = glGetUniformLocation(prog, "uLightSpaceMatrix");
+            if (lsmLoc != -1) {
+                glUniformMatrix4fv(lsmLoc, 1, GL_FALSE, glm::value_ptr(lightSpaceMat));
+            }
+
+            // Light direction
+            auto lightDir = CoreEngine::GetShadowLightDirection();
+            GLint ldLoc = glGetUniformLocation(prog, "uLightDirection");
+            if (ldLoc != -1) {
+                glUniform3f(ldLoc, lightDir.x, lightDir.y, lightDir.z);
+            }
+
+            // Shadow near/far
+            GLint snLoc = glGetUniformLocation(prog, "uShadowNear");
+            GLint sfLoc = glGetUniformLocation(prog, "uShadowFar");
+            if (snLoc != -1) glUniform1f(snLoc, 0.5f);
+            if (sfLoc != -1) glUniform1f(sfLoc, 50.0f);
+        } else {
+            // Shadows disabled — tell shader to skip shadow calc
+            GLint hasShadowLoc = glGetUniformLocation(prog, "uHasShadowMap");
+            if (hasShadowLoc != -1) glUniform1i(hasShadowLoc, 0);
+        }
+
+        // Draw grid on the ground FIRST (before scene objects)
+        CoreEngine::DrawGrid(40, 1.0f, 20.0f, view, projection);
 
         for (auto& obj : sceneObjs) {
             auto& mesh = obj.mesh;
@@ -609,18 +863,50 @@ namespace Editor {
             model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
 
             CoreEngine::SetUniformMat4(prog, "uModel", model);
-            CoreEngine::SetUniformVec3(prog, "uColor", obj.material.baseColor);
+            CoreEngine::SetUniformVec3(prog, "uBaseColor", obj.material.baseColor);
+
+            // Pass material properties
+            GLint metallicLoc = glGetUniformLocation(prog, "uMetallic");
+            if (metallicLoc != -1) glUniform1f(metallicLoc, obj.material.metallic);
+            GLint roughnessLoc = glGetUniformLocation(prog, "uRoughness");
+            if (roughnessLoc != -1) glUniform1f(roughnessLoc, obj.material.roughness);
+            GLint aoLoc = glGetUniformLocation(prog, "uAO");
+            if (aoLoc != -1) glUniform1f(aoLoc, obj.material.ao);
+            GLint emissiveLoc = glGetUniformLocation(prog, "uEmissiveColor");
+            if (emissiveLoc != -1) CoreEngine::SetUniformVec3(prog, "uEmissiveColor", obj.material.emissiveColor);
+
+            // Textures
+            GLint hasDiffuseLoc = glGetUniformLocation(prog, "uHasDiffuse");
+            GLint hasNormalLoc = glGetUniformLocation(prog, "uHasNormal");
+            GLint diffuseLoc = glGetUniformLocation(prog, "uDiffuseTex");
+            GLint normalLoc = glGetUniformLocation(prog, "uNormalTex");
+
+            if (obj.material.diffuseTexture && obj.material.diffuseTexture->id) {
+                if (hasDiffuseLoc != -1) glUniform1i(hasDiffuseLoc, 1);
+                if (diffuseLoc != -1) {
+                    glActiveTexture(GL_TEXTURE1);
+                    CoreEngine::BindTexture(*obj.material.diffuseTexture, 1);
+                    glUniform1i(diffuseLoc, 1);
+                }
+            } else {
+                if (hasDiffuseLoc != -1) glUniform1i(hasDiffuseLoc, 0);
+            }
+            if (hasNormalLoc != -1) glUniform1i(hasNormalLoc, 0);
 
             glBindVertexArray(mesh->VAO);
-            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);
+            if (mesh->EBO) {
+                glDrawElements(GL_TRIANGLES, (GLsizei)mesh->indexCount, GL_UNSIGNED_INT, 0);
+            } else {
+                glDrawArrays(GL_TRIANGLES, 0, (GLsizei)mesh->indexCount);
+            }
             glBindVertexArray(0);
         }
 
-        // Draw grid on the ground
-        CoreEngine::DrawGrid(20, 1.0f, 10.0f);
-
         // Draw selected object bounds wireframe
-        CoreEngine::DrawSelectedObjectBounds();
+        CoreEngine::DrawSelectedObjectBounds(view, projection);
+
+        // Reset viewport for full-window ImGui rendering
+        glViewport(0, 0, windowW, windowH);
 
         RenderImGui(window);
         CoreEngine::RenderEnd();

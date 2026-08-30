@@ -57,3 +57,6 @@ opencode.json
 
 # Agent instruction files
 AGENTS.md
+
+# imgui config
+imgui.ini

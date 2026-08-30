@@ -2,6 +2,9 @@
 #include <iostream>
 
 int main() {
+    printf("[MAIN] Editor starting...\n");
+    fflush(stdout);
+    
     GLFWwindow* window = Editor::Init();
     if (!window) {
         std::cerr << "[Main] Fatal: failed to initialize editor" << std::endl;
