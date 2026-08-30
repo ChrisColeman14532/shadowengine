@@ -82,14 +82,6 @@ namespace Editor {
         CoreEngine::ClearSceneWithMaterials();
         CoreEngine::CreateCameraObject();  // Restore camera after clearing scene
 
-        auto groundMesh = CoreEngine::GetPrimitiveMesh("plane");
-        auto groundMat = CoreEngine::CreateDefaultMaterial();
-        groundMat.name = "ground_material";
-        groundMat.baseColor = glm::vec3(0.3f, 0.3f, 0.25f);
-        auto& ground = CoreEngine::AddToSceneWithMaterial("ground", groundMesh, groundMat);
-        ground.position = {0, -2.0f, 0};
-        ground.scale = {10, 1, 10};
-
         auto loadedMat = CoreEngine::CreateDefaultMaterial();
         loadedMat.name = "loaded_model_material";
         loadedMat.baseColor = glm::vec3(0.7f, 0.7f, 0.7f);
