@@ -1293,6 +1293,7 @@ void CoreEngine::DrawSkybox(float aspect) {
 // ── Textures ────────────────────────────────────────────────────────
 
 #define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
 #include "core/stb_image.h"
 
 Texture CoreEngine::LoadTexture(const std::string& path) {
@@ -1329,6 +1330,45 @@ Texture CoreEngine::LoadTexture(const std::string& path) {
     return tex;
 }
 
+Texture CoreEngine::LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels) {
+    Texture tex;
+    tex.width = width;
+    tex.height = height;
+    tex.channels = channels;
+
+    printf("[LoadTextureFromMemory] width=%d height=%d channels=%d data=%p\n", width, height, channels, data);
+
+    glGenTextures(1, &tex.id);
+    printf("[LoadTextureFromMemory] glGenTextures returned id=%u\n", tex.id);
+    
+    if (tex.id == 0) {
+        printf("[LoadTextureFromMemory] ERROR: glGenTextures failed! OpenGL error: %u\n", glGetError());
+        return tex;
+    }
+    
+    glBindTexture(GL_TEXTURE_2D, tex.id);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Determine GL format from channel count
+    GLenum format = GL_RGBA;
+    if (channels == 3) format = GL_RGB;
+    else if (channels == 1) format = GL_RED;
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    GLenum texErr = glGetError();
+    if (texErr != GL_NO_ERROR) {
+        printf("[LoadTextureFromMemory] glTexImage2D error: %u\n", texErr);
+    }
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
+}
+
 void CoreEngine::DestroyTexture(Texture& tex) {
     if (tex.id) {
         glDeleteTextures(1, &tex.id);
@@ -1355,7 +1395,7 @@ Material CoreEngine::CreateDefaultMaterial() {
         0.0f,             // metallic
         1.0f,             // roughness
         1.0f,             // AO
-        nullptr, nullptr,
+        {}, {},           // diffuseTexture, normalTexture (id=0 = no texture)
         false
     };
 }

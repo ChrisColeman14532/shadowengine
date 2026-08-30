@@ -57,6 +57,15 @@ namespace CoreEngine {
         std::string filename;
         std::vector<PrimitiveMesh> meshes;
         std::vector<RawMeshData> rawMeshes;
+        glm::vec3 materialColor = glm::vec3(0.7f);  // Diffuse color from FBX material
+        // Embedded textures extracted from FBX (decoded pixel data)
+        struct EmbeddedTexture {
+            unsigned char* data = nullptr;
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+        };
+        std::vector<EmbeddedTexture> textures;
     };
 
     // Shared GPU mesh handle. When the last reference is dropped, the
@@ -154,8 +163,12 @@ namespace CoreEngine {
         int channels = 0;
     };
     Texture LoadTexture(const std::string& path);
+    Texture LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels);
     void DestroyTexture(Texture& tex);
     void BindTexture(Texture& tex, GLuint unit);
+
+    // Register a texture for engine-managed lifetime (auto-destroyed on shutdown)
+    void RegisterTextureForLifetime(Texture& tex);
 
     // ── Materials ───────────────────────────────────────────────────
 
@@ -166,8 +179,8 @@ namespace CoreEngine {
         float metallic = 0.0f;    // 0 = non-metal, 1 = metal
         float roughness = 1.0f;   // 0 = polished, 1 = rough
         float ao = 1.0f;          // ambient occlusion multiplier
-        Texture* diffuseTexture = nullptr;
-        Texture* normalTexture = nullptr;
+        Texture diffuseTexture;   // id == 0 means no texture
+        Texture normalTexture;    // id == 0 means no texture
         bool useMaterial = false;
     };
     Material CreateDefaultMaterial();

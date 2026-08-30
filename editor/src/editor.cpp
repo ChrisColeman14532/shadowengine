@@ -40,9 +40,43 @@ static void ConsoleLog(const std::string& msg) {
 static double g_prevMouseX = 0;
 static double g_prevMouseY = 0;
 static bool g_isOrbiting = false;
+static glm::vec3 g_cameraPanOffset = glm::vec3(0, 0, 0);
 static bool g_isPanning = false;
 
 namespace Editor {
+
+    // Generate a colored checkerboard texture (128x128)
+    static CoreEngine::Texture GenerateCheckerboardTexture() {
+        const int size = 128;
+        const int checkerSize = 16;  // 8x8 checkerboard
+        unsigned char* pixels = new unsigned char[size * size * 4];
+
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                int ci = (x / checkerSize) % 2;
+                int cj = (y / checkerSize) % 2;
+                bool white = (ci != cj);
+                int idx = (y * size + x) * 4;
+
+                if (white) {
+                    // White squares with slight warm tint
+                    pixels[idx + 0] = 240;
+                    pixels[idx + 1] = 235;
+                    pixels[idx + 2] = 220;
+                } else {
+                    // Blue-gray squares
+                    pixels[idx + 0] = 80;
+                    pixels[idx + 1] = 100;
+                    pixels[idx + 2] = 160;
+                }
+                pixels[idx + 3] = 255;  // Full alpha
+            }
+        }
+
+        CoreEngine::Texture tex = CoreEngine::LoadTextureFromMemory(pixels, size, size, 4);
+        delete[] pixels;
+        return tex;
+    }
 
     static void InitImGui(GLFWwindow* window) {
         IMGUI_CHECKVERSION();
@@ -86,9 +120,29 @@ namespace Editor {
 
         auto loadedMat = CoreEngine::CreateDefaultMaterial();
         loadedMat.name = "loaded_model_material";
-        loadedMat.baseColor = glm::vec3(0.7f, 0.7f, 0.7f);
+        loadedMat.baseColor = model.materialColor;  // Use FBX material color
         loadedMat.roughness = 0.8f;
         loadedMat.metallic = 0.2f;
+        loadedMat.useMaterial = true;
+
+        // Apply embedded textures from FBX if available
+        printf("[Editor] Model has %zu texture(s)\n", model.textures.size());
+        for (size_t i = 0; i < model.textures.size(); ++i) {
+            const auto& tex = model.textures[i];
+            printf("[Editor] Texture %zu: %dx%d, data=%p\n", i, tex.width, tex.height, tex.data);
+            if (!tex.data) {
+                printf("[Editor]   WARNING: Texture data is null!\n");
+                continue;
+            }
+            CoreEngine::Texture engineTex = CoreEngine::LoadTextureFromMemory(tex.data, tex.width, tex.height, tex.channels);
+            printf("[Editor]   OpenGL texture ID: %u\n", engineTex.id);
+            loadedMat.diffuseTexture = engineTex;
+            printf("[Editor] Applied embedded texture: %dx%d\n", tex.width, tex.height);
+            break;  // Use the first diffuse texture found
+        }
+        printf("[Editor] Final material baseColor=(%.2f, %.2f, %.2f), diffuseTexture.id=%u\n",
+               loadedMat.baseColor.r, loadedMat.baseColor.g, loadedMat.baseColor.b, loadedMat.diffuseTexture.id);
+
         CoreEngine::AddToSceneWithMaterial("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)), loadedMat);
 
         float maxX = fmaxf(modelExtent.x, modelExtent.y);
@@ -356,29 +410,25 @@ namespace Editor {
 
                     ImGui::Separator();
                     ImGui::Text("Diffuse Texture");
-                    if (selected->material.diffuseTexture && selected->material.diffuseTexture->id) {
-                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Loaded (%dx%d)", 
-                            selected->material.diffuseTexture->width, 
-                            selected->material.diffuseTexture->height);
+                    if (selected->material.diffuseTexture.id) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Loaded (%dx%d)",
+                            selected->material.diffuseTexture.width,
+                            selected->material.diffuseTexture.height);
                         if (ImGui::SmallButton("Unload Texture")) {
-                            CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
-                            selected->material.diffuseTexture = nullptr;
+                            CoreEngine::DestroyTexture(selected->material.diffuseTexture);
                         }
                     } else {
                         if (ImGui::Button("Load Texture...", ImVec2(-1, 0))) {
                             // Simple file picker - try common paths
                             static char texPath[MAX_PATH] = {0};
                             if (ImGui::InputText("##texPath", texPath, sizeof(texPath))) {
-                                if (selected->material.diffuseTexture && selected->material.diffuseTexture->id) {
-                                    // Already has a texture, destroy it
-                                    CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
-                                    selected->material.diffuseTexture = nullptr;
+                                if (selected->material.diffuseTexture.id) {
+                                    // Already has a texture, destroy it first
+                                    CoreEngine::DestroyTexture(selected->material.diffuseTexture);
                                 }
-                                selected->material.diffuseTexture = new CoreEngine::Texture();
-                                *selected->material.diffuseTexture = CoreEngine::LoadTexture(texPath);
-                                if (!selected->material.diffuseTexture->id) {
-                                    delete selected->material.diffuseTexture;
-                                    selected->material.diffuseTexture = nullptr;
+                                selected->material.diffuseTexture = CoreEngine::LoadTexture(texPath);
+                                if (!selected->material.diffuseTexture.id) {
+                                    printf("[Editor] Failed to load texture: %s\n", texPath);
                                 }
                                 texPath[0] = '\0';
                             }
@@ -415,9 +465,8 @@ namespace Editor {
                 if (ImGui::Button("Delete Object", ImVec2(-1, 0))) {
                     CoreEngine::RemoveFromSceneWithMaterials(selected->id);
                     // Clean up texture if loaded
-                    if (selected->material.diffuseTexture) {
-                        CoreEngine::DestroyTexture(*selected->material.diffuseTexture);
-                        delete selected->material.diffuseTexture;
+                    if (selected->material.diffuseTexture.id) {
+                        CoreEngine::DestroyTexture(selected->material.diffuseTexture);
                     }
                 }
                 ImGui::PopStyleColor(2);
@@ -520,6 +569,25 @@ namespace Editor {
                 if (ImGui::MenuItem("Reset Camera", "Home")) {
                     CoreEngine::ResetCamera();
                     ConsoleLog("Camera reset to default position");
+                }
+                if (ImGui::MenuItem("Test Texture (Colored Cube)")) {
+                    // Create a cube with a checkerboard texture to verify texture rendering works
+                    auto meshCube = CoreEngine::GetPrimitiveMesh("cube");
+                    if (meshCube) {
+                        auto mat = CoreEngine::CreateDefaultMaterial();
+                        mat.name = "test_texture_material";
+                        mat.baseColor = glm::vec3(1.0f);  // White base so texture colors show through
+                        mat.useMaterial = true;
+                        CoreEngine::Texture tex = GenerateCheckerboardTexture();
+                        mat.diffuseTexture = tex;
+                        auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                        uint32_t nextId = CoreEngine::GetNextSceneObjectId();
+                        auto& obj = CoreEngine::AddToSceneWithMaterial("test_checkerboard", meshCube, mat);
+                        obj.position = {0, 0, 0};
+                        obj.scale = {1, 1, 1};
+                        ConsoleLog("Added test cube with checkerboard texture (verify textures are working!)");
+                        printf("[Editor] Test texture loaded: %dx%d\n", tex.width, tex.height);
+                    }
                 }
                 ImGui::EndMenu();
             }
@@ -784,12 +852,52 @@ namespace Editor {
             g_prevMouseY = my;
         }
 
-        // Compute camera position from target + offset
-        glm::vec3 camPos(cameraTarget.x + (float)CoreEngine::GetCameraOffset().x,
-                         cameraTarget.y + (float)CoreEngine::GetCameraOffset().y,
-                         cameraTarget.z + (float)CoreEngine::GetCameraOffset().z);
-        glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
-        glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
+        // WASD camera movement (world-space, free look)
+        // When WASD is pressed, move camera target along with camera so it never re-orients
+        {
+            bool moving = false;
+            double keyX = 0.0, keyY = 0.0, keyZ = 0.0;
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_A) == GLFW_REPEAT) {
+                keyX = -1.0f; moving = true;
+            }
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_D) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_D) == GLFW_REPEAT) {
+                keyX = 1.0f; moving = true;
+            }
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_W) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_W) == GLFW_REPEAT) {
+                keyY = 1.0f; moving = true;
+            }
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_S) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_S) == GLFW_REPEAT) {
+                keyY = -1.0f; moving = true;
+            }
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_Q) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_Q) == GLFW_REPEAT) {
+                keyZ = 1.0f; moving = true;
+            }
+            if (glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_E) == GLFW_PRESS || glfwGetKey(CoreEngine::GetWindow(), GLFW_KEY_E) == GLFW_REPEAT) {
+                keyZ = -1.0f; moving = true;
+            }
+
+            if (moving) {
+                float speed = 5.0f * 0.02f;
+                g_cameraPanOffset.x += (float)keyX * speed;
+                g_cameraPanOffset.y += (float)keyY * speed;
+                g_cameraPanOffset.z += (float)keyZ * speed;
+                
+                // Move the target with the camera so the view doesn't reorient
+                auto target = CoreEngine::GetCameraTarget();
+                target.x += (float)keyX * speed;
+                target.y += (float)keyY * speed;
+                target.z += (float)keyZ * speed;
+                CoreEngine::SetCameraTarget(target);
+            }
+        }
+
+        // Compute camera position from target + orbit offset + pan
+        auto offset = CoreEngine::GetCameraOffset();
+        glm::vec3 camPos(cameraTarget.x + (float)offset.x + g_cameraPanOffset.x,
+                         cameraTarget.y + (float)offset.y + g_cameraPanOffset.y,
+                         cameraTarget.z + (float)offset.z + g_cameraPanOffset.z);
+        glm::vec3 camTargetFinal(cameraTarget.x, cameraTarget.y, cameraTarget.z);
+        glm::mat4 view = glm::lookAt(camPos, camTargetFinal, glm::vec3(0, 1, 0));
 
         // Get projection matrix using actual viewport dimensions
         glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, aspect);
@@ -873,17 +981,19 @@ namespace Editor {
             GLint emissiveLoc = glGetUniformLocation(prog, "uEmissiveColor");
             if (emissiveLoc != -1) CoreEngine::SetUniformVec3(prog, "uEmissiveColor", obj.material.emissiveColor);
 
+
+
             // Textures
             GLint hasDiffuseLoc = glGetUniformLocation(prog, "uHasDiffuse");
             GLint hasNormalLoc = glGetUniformLocation(prog, "uHasNormal");
             GLint diffuseLoc = glGetUniformLocation(prog, "uDiffuseTex");
             GLint normalLoc = glGetUniformLocation(prog, "uNormalTex");
 
-            if (obj.material.diffuseTexture && obj.material.diffuseTexture->id) {
+            if (obj.material.diffuseTexture.id) {
                 if (hasDiffuseLoc != -1) glUniform1i(hasDiffuseLoc, 1);
                 if (diffuseLoc != -1) {
                     glActiveTexture(GL_TEXTURE1);
-                    CoreEngine::BindTexture(*obj.material.diffuseTexture, 1);
+                    CoreEngine::BindTexture(obj.material.diffuseTexture, 1);
                     glUniform1i(diffuseLoc, 1);
                 }
             } else {

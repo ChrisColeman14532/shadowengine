@@ -9,6 +9,11 @@
 #include <algorithm>
 #include <float.h>
 
+// stb_image for decoding embedded textures (used only in asset_loader, engine has its own)
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_STATIC
+#include "core/stb_image.h"
+
 namespace {
 
     // 8 floats per vertex: pos(3) + normal(3) + uv(2)
@@ -52,6 +57,16 @@ namespace {
             CoreEngine::Init();
             s_engineInited = true;
         }
+    }
+
+    // Track embedded textures across all loaded models for cleanup
+    static std::vector<CoreEngine::FBXModel::EmbeddedTexture*> s_allEmbeddedTextures;
+
+    void CleanupEmbeddedTextures() {
+        for (auto* etexPtr : s_allEmbeddedTextures) {
+            stbi_image_free(etexPtr->data);
+        }
+        s_allEmbeddedTextures.clear();
     }
 
 } // namespace
@@ -111,6 +126,133 @@ namespace AssetLoader {
             model.success = true;
         }
 
+        // Extract material diffuse color from the first material
+        if (scene->mNumMaterials > 0 && scene->mMaterials) {
+            aiMaterial* firstMat = scene->mMaterials[0];
+            aiColor3D diffColor(0, 0, 0);
+            if (firstMat->Get(AI_MATKEY_COLOR_DIFFUSE, diffColor) == AI_SUCCESS) {
+                model.materialColor = glm::vec3(diffColor.r, diffColor.g, diffColor.b);
+                printf("[AssetLoader] Extracted material color: (%.2f, %.2f, %.2f)\n",
+                       model.materialColor.r, model.materialColor.g, model.materialColor.b);
+            }
+        }
+
+        // Debug: dump scene info
+        printf("[AssetLoader] Scene has %u meshes, %u textures, %u materials\n",
+               scene->mNumMeshes, scene->mNumTextures, scene->mNumMaterials);
+        if (scene->mMaterials) {
+            for (unsigned int m = 0; m < scene->mNumMaterials; ++m) {
+                aiMaterial* mat = scene->mMaterials[m];
+                aiString matName;
+                mat->Get(AI_MATKEY_NAME, matName);
+                printf("[AssetLoader]   Material %u: '%s'\n", m, matName.C_Str());
+
+                // Get diffuse color directly (not texture)
+                aiColor3D diffColor(0, 0, 0);
+                if (mat->Get(AI_MATKEY_COLOR_DIFFUSE, diffColor) == AI_SUCCESS) {
+                    printf("[AssetLoader]     Diffuse color: (%.2f, %.2f, %.2f)\n", diffColor.r, diffColor.g, diffColor.b);
+                }
+
+                // Get specular color
+                aiColor3D specColor(0, 0, 0);
+                if (mat->Get(AI_MATKEY_COLOR_SPECULAR, specColor) == AI_SUCCESS) {
+                    printf("[AssetLoader]     Specular color: (%.2f, %.2f, %.2f)\n", specColor.r, specColor.g, specColor.b);
+                }
+
+                // Check for any texture slots at all
+                unsigned int texCount = mat->GetTextureCount(aiTextureType_DIFFUSE);
+                printf("[AssetLoader]     Diffuse texture slots: %u\n", texCount);
+                texCount = mat->GetTextureCount(aiTextureType_BASE_COLOR);
+                printf("[AssetLoader]     BaseColor texture slots: %u\n", texCount);
+
+                // Dump all texture paths for ALL texture types
+                for (aiTextureType type = aiTextureType_DIFFUSE; type <= aiTextureType_HEIGHT; type = (aiTextureType)(type + 1)) {
+                    unsigned int count = mat->GetTextureCount(type);
+                    if (count > 0) {
+                        aiString path;
+                        if (mat->GetTexture(type, 0, &path) == AI_SUCCESS) {
+                            printf("[AssetLoader]     Texture type %d path: '%s'\n", type, path.C_Str());
+                        }
+                    }
+                }
+
+            }
+        }
+
+        // Extract embedded textures from FBX
+        if (scene->mNumTextures > 0 && scene->mTextures) {
+            printf("[AssetLoader] Found %u embedded texture(s) in FBX\n", scene->mNumTextures);
+
+            for (unsigned int i = 0; i < scene->mNumTextures; ++i) {
+                const aiTexture* aiTex = scene->mTextures[i];
+                if (!aiTex->pcData) continue;
+
+                CoreEngine::FBXModel::EmbeddedTexture etex = {};
+
+                if (aiTex->mHeight > 0) {
+                    // Uncompressed: pcData points to raw pixel data
+                    // mWidth = width, mHeight = height
+                    // FBX stores textures typically as ARGB (4 bytes per pixel)
+                    size_t pixelCount = (size_t)aiTex->mWidth * aiTex->mHeight;
+                    size_t byteCount = pixelCount * 4;  // 4 bytes per pixel
+
+                    // Allocate output buffer (RGBA for OpenGL)
+                    etex.data = new unsigned char[byteCount];
+                    // pcData is aiTextureElement* for uncompressed, cast to raw bytes
+                    const unsigned char* src = reinterpret_cast<const unsigned char*>(aiTex->pcData);
+
+                    // Convert ARGB -> RGBA
+                    for (size_t j = 0; j < pixelCount; ++j) {
+                        const unsigned char* srcPixel = &src[j * 4];
+                        unsigned char* dst = &etex.data[j * 4];
+                        // FBX embedded textures are typically stored as ABGR or ARGB
+                        // Try ABGR first (common for Maya/3ds Max exported FBX)
+                        dst[0] = srcPixel[2];  // R from B
+                        dst[1] = srcPixel[1];  // G from G
+                        dst[2] = srcPixel[0];  // B from R
+                        dst[3] = srcPixel[3];  // A from A
+                    }
+                    etex.width = aiTex->mWidth;
+                    etex.height = aiTex->mHeight;
+                    etex.channels = 4;
+                    printf("[AssetLoader]   Texture %u: uncompressed %dx%d (%s)\n",
+                           i, aiTex->mWidth, aiTex->mHeight, aiTex->achFormatHint);
+
+                } else {
+                    // Compressed: pcData points to compressed bytes (JPEG, PNG, etc.)
+                    // mWidth = byte count, achFormatHint = file extension
+                    size_t compLen = (size_t)aiTex->mWidth;
+                    std::vector<unsigned char> compData(compLen);
+                    memcpy(compData.data(), aiTex->pcData, compLen);
+
+                    // Try to decode with stb_image
+                    int w = 0, h = 0, comp = 0;
+                    unsigned char* decoded = stbi_load_from_memory(
+                        compData.data(), (int)compLen,
+                        &w, &h, &comp, 4
+                    );
+
+                    if (!decoded) {
+                        printf("[AssetLoader]   Texture %u: compressed decode failed (%s)\n",
+                               i, stbi_failure_reason() ? stbi_failure_reason() : "unknown");
+                        continue;
+                    }
+
+                    etex.data = decoded;
+                    etex.width = w;
+                    etex.height = h;
+                    etex.channels = 4;
+                    printf("[AssetLoader]   Texture %u: compressed %dx%d (%s)\n",
+                           i, w, h, aiTex->achFormatHint);
+                }
+
+                model.textures.push_back(etex);
+                s_allEmbeddedTextures.push_back(&model.textures.back());
+            }
+        } else {
+            printf("[AssetLoader] WARNING: No embedded textures found (mNumTextures=%u)\n", scene->mNumTextures);
+        }
+
         s_allLoadedModels.push_back(model);
         return model;
     }
@@ -132,6 +274,7 @@ namespace AssetLoader {
             DestroyFBX(model);
         }
         s_allLoadedModels.clear();
+        CleanupEmbeddedTextures();
     }
 
     CoreEngine::PrimitiveMesh MergeFromModel(const CoreEngine::FBXModel& model) {
