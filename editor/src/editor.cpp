@@ -77,7 +77,9 @@ namespace Editor {
 
         auto* win = CoreEngine::GetWindow();
         int w = 1280, h = 720;
-        glfwGetFramebufferSize(win, &w, &h);
+        if (win) glfwGetFramebufferSize(win, &w, &h);
+        if (w < 1) w = 1280;
+        if (h < 1) h = 720;
 
         CoreEngine::ClearSceneWithMaterials();
         CoreEngine::CreateCameraObject();  // Restore camera after clearing scene
@@ -733,9 +735,12 @@ namespace Editor {
         int vpH = windowH - (int)menuBarH - panelBottomH;
         if (vpW < 1) vpW = windowW;
         if (vpH < 1) vpH = windowH;
-        // Prevent zero aspect ratio
-        float aspect = (float)vpW / (float)vpH;
-        if (aspect <= 0.0f) aspect = 1.333f; // 16:10 fallback
+        // Prevent zero/NaN aspect ratio
+        float aspect = 1.333f; // 16:10 default
+        if (vpW > 0 && vpH > 0) {
+            aspect = (float)vpW / (float)vpH;
+            if (aspect <= 0.0f) aspect = 1.333f;
+        }
 
         CoreEngine::RenderBegin();
 
