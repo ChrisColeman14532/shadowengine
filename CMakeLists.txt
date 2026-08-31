@@ -79,3 +79,21 @@ add_custom_command(TARGET editor POST_BUILD
         $<TARGET_FILE_DIR:editor>
     COMMENT "Copying vcpkg DLLs to build output"
 )
+
+# Copy shader files to build output directory
+add_custom_command(TARGET editor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:editor>/shader
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/material.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/material.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/shadow_depth.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/shadow_depth.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/skybox.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/skybox.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/grid.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/grid.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/bounds.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/bounds.frag
+        $<TARGET_FILE_DIR:editor>/shader/
+    COMMENT "Copying shader files to build output"
+)

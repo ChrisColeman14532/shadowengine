@@ -5,304 +5,73 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <string>
+#include <filesystem>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
-// ── Default (solid color) shader source ────────────────────────────
+// ── Shader file loader ─────────────────────────────────────────────
+// Attempts to load a shader file from several possible locations:
+//   1. shader/<filename>       (relative to current working directory)
+//   2. <filename>              (relative to current directory)
+//   3. Relative to executable path
 
-static const char* default_vs = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUV;
+static std::string LoadShaderSource(const std::string& filename) {
+    const char* env = std::getenv("SHADOW_ENGINE_SHADERS");
+    if (env && env[0]) {
+        std::string base(env);
+        if (base.back() != '/' && base.back() != '\\') base += '/';
+        std::string path = base + filename;
+        std::ifstream f(path);
+        if (f.good()) { std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return src; }
+    }
 
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
-
-out vec3 vNormal;
-out vec2 vUV;
-
-void main() {
-    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
-    vNormal = mat3(uModel) * aNormal;
-    vUV = aUV;
-}
-)";
-
-static const char* default_fs = R"(
-#version 330 core
-out vec4 FragColor;
-uniform vec3 uColor;
-void main() { FragColor = vec4(uColor, 1.0); }
-)";
-
-// ── Material (textured) shader source ───────────────────────────────
-
-static const char* material_vs = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUV;
-
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
-
-out vec3 vNormal;
-out vec2 vUV;
-out vec3 vWorldPos;
-out vec3 vViewDir;
-
-void main() {
-    gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
-    vNormal = mat3(uModel) * aNormal;
-    vUV = aUV;
-    vWorldPos = (uModel * vec4(aPos, 1.0)).xyz;
-    vViewDir = -(uView * uModel * vec4(aPos, 1.0)).xyz;
-}
-)";
-
-static const char* material_fs = R"(
-#version 330 core
-in vec3 vNormal;
-in vec2 vUV;
-in vec3 vWorldPos;
-in vec3 vViewDir;
-
-out vec4 FragColor;
-uniform int uHasShadowMap;
-
-// ── Shadow PCF function ────────────────────────────────────────────
-float ShadowCalculation(vec4 fragPosLightSpace, sampler2D depthMap,
-                        mat4 lightSpaceMatrix, vec3 lightDir,
-                        vec3 worldPos, vec3 normal, float near, float far) {
-    // Transform to shadow map space
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    
-    // Convert from [-1, 1] to [0, 1]
-    projCoords = projCoords * 0.5 + 0.5;
-    
-    // Bias to prevent shadow acne
-    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.005);
-    
-    // PCF filtering with 3x3 kernel
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(2048.0);
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(depthMap, projCoords.xy + vec2(float(x), float(y)) * texelSize).r;
-            shadow += (projCoords.z - bias > pcfDepth) ? 1.0 : 0.0;
+    std::vector<std::string> candidates = {
+        "shader/" + filename,
+        filename,
+    };
+    for (const auto& c : candidates) {
+        std::ifstream f(c);
+        if (f.good()) {
+            return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         }
     }
-    shadow /= 9.0;
-    
-    return shadow;
-}
 
-// ── Lighting function ──────────────────────────────────────────────
-vec3 ComputeLighting(vec3 baseColor, vec3 normal, vec3 worldPos,
-                     vec3 lightDir, vec3 viewDir, float metallic, float roughness,
-                     float ao, vec3 emissiveColor) {
+    // Try relative to executable directory
+    char buf[4096];
+#if defined(_WIN32)
+    GetModuleFileNameA(nullptr, buf, sizeof(buf));
+#else
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len == -1) return "";
+    buf[len] = '\0';
+#endif
+    std::string exeDir(buf);
+    auto slash = exeDir.rfind('/');
+    if (slash != std::string::npos) exeDir.erase(slash + 1);
+    else exeDir = ".";
 
-    // Bright ambient
-    vec3 ambient = 0.45 * baseColor * ao;
-
-    // Diffuse
-    float NdotL = max(dot(normal, lightDir), 0.0);
-    vec3 diffuse = NdotL * baseColor;
-
-    // Specular
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float NdotH = max(dot(normal, halfDir), 0.0);
-    float spec = pow(NdotH, mix(128.0, 8.0, roughness)) * metallic;
-    vec3 specular = spec * vec3(1.0, 0.98, 0.95) * (0.3 + 0.7 * metallic);
-
-    return (ambient + diffuse + specular) + emissiveColor;
-}
-
-uniform vec3 uBaseColor;
-uniform vec3 uEmissiveColor;
-uniform float uMetallic;
-uniform float uRoughness;
-uniform float uAO;
-
-uniform sampler2D uDiffuseTex;
-uniform sampler2D uNormalTex;
-uniform int uHasDiffuse;
-uniform int uHasNormal;
-
-// Shadow mapping uniforms
-uniform sampler2D uShadowMap;
-uniform mat4 uLightSpaceMatrix;
-uniform vec3 uLightDirection;
-uniform float uShadowNear;
-uniform float uShadowFar;
-
-void main() {
-    vec3 baseColor = uBaseColor;
-    vec3 normal = normalize(vNormal);
-
-    // Sample diffuse texture if available
-    if (uHasDiffuse == 1) {
-        baseColor *= texture(uDiffuseTex, vUV).rgb;
+    // Try exe/../shader/<filename>
+    std::string exePath = exeDir + "/../shader/" + filename;
+    std::ifstream f2(exePath);
+    if (f2.good()) {
+        return std::string((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
     }
 
-    // Compute lighting
-    vec3 lightDir = normalize(uLightDirection);
-    vec3 viewDir = normalize(vViewDir);
-    
-    // Shadow calculation
-    vec4 fragPosLightSpace = uLightSpaceMatrix * vec4(vWorldPos, 1.0);
-    float shadow = 0.0;
-    vec3 litColor = ComputeLighting(baseColor, normal, vWorldPos,
-                                    lightDir, viewDir, uMetallic, uRoughness,
-                                    uAO, uEmissiveColor);
-    
-    if (uHasShadowMap == 1) {
-        shadow = ShadowCalculation(fragPosLightSpace, uShadowMap,
-                                   uLightSpaceMatrix, lightDir,
-                                   vWorldPos, normal,
-                                   uShadowNear, uShadowFar);
-        vec3 shadowColor = litColor * mix(1.0, 0.5, shadow);
-        FragColor = vec4(shadowColor, 1.0);
-    } else {
-        FragColor = vec4(litColor, 1.0);
-    }
+    fprintf(stderr, "[Shader] Failed to load shader: %s\n", filename.c_str());
+    return "";
 }
-)";
 
-// ── Shadow map depth shader ───────────────────────────────────────
-
-static const char* shadow_depth_vs = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
-layout(location = 2) in vec2 aUV;
-
-uniform mat4 uLightSpaceMatrix;
-uniform mat4 uModel;
-
-void main() {
-    gl_Position = uLightSpaceMatrix * uModel * vec4(aPos, 1.0);
+static GLuint LoadShaderProgram(const char* vsFile, const char* fsFile) {
+    std::string vsSrc = LoadShaderSource(vsFile);
+    std::string fsSrc = LoadShaderSource(fsFile);
+    if (vsSrc.empty() || fsSrc.empty()) return 0;
+    return CoreEngine::CreateShaderProgram(vsSrc.c_str(), fsSrc.c_str());
 }
-)";
 
-static const char* shadow_depth_fs = R"(
-#version 330 core
-out vec4 FragColor;
-void main() {
-    FragColor = vec4(1.0);
-}
-)";
 
-// ── Shadow PCF sampling function (used by material shader) ─────────
-
-static const char* shadow_pcf_func = R"(
-// Percentage-Closer Filtering for shadow map sampling
-float ShadowCalculation(vec4 fragPosLightSpace, sampler2D depthMap,
-                        mat4 lightSpaceMatrix, vec3 lightDir,
-                        vec3 worldPos, vec3 normal, float near, float far) {
-    // Transform to shadow map space
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    
-    // Convert from [-1, 1] to [0, 1]
-    projCoords = projCoords * 0.5 + 0.5;
-    
-    // Get depth from shadow map at this texel
-    float currentDepth = texture(depthMap, projCoords.xy).r;
-    
-    // Bias to prevent shadow acne
-    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.005);
-    
-    // PCF filtering with 4-tap
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(2048.0);
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(depthMap, projCoords.xy + vec2(float(x), float(y)) * texelSize).r;
-            shadow += (projCoords.z - bias > pcfDepth) ? 1.0 : 0.0;
-        }
-    }
-    shadow /= 9.0;
-    
-    return shadow;
-}
-)";
-
-// ── Skybox shader source ────────────────────────────────────────────
-
-static const char* skybox_vs = R"(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-
-uniform mat4 uView;
-uniform mat4 uProjection;
-
-out vec3 vDirection;
-
-void main() {
-    // Remove translation from view matrix (skybox doesn't move)
-    mat4 viewNoTranslate = uView;
-    viewNoTranslate[3] = vec4(0.0, 0.0, 0.0, 1.0);
-    
-    vDirection = aPos;
-    gl_Position = (uProjection * viewNoTranslate * vec4(aPos, 1.0)).xyww;
-}
-)";
-
-static const char* skybox_fs = R"(
-#version 330 core
-in vec3 vDirection;
-out vec4 FragColor;
-
-void main() {
-    vec3 dir = normalize(vDirection);
-    
-    // Sky gradient parameters
-    float sunAngle = 0.4; // sun position in radians from horizon
-    vec3 sunDir = normalize(vec3(0.8, sin(sunAngle), 0.6));
-    
-    // Sky colors
-    vec3 zenith = vec3(0.15, 0.3, 0.85);    // deep blue zenith
-    vec3 midday = vec3(0.4, 0.65, 0.95);    // light blue mid-sky
-    vec3 horizon = vec3(0.85, 0.65, 0.45);   // warm orange horizon
-    vec3 below = vec3(0.5, 0.35, 0.25);      // warm brown below
-    
-    float y = dir.y;
-    vec3 skyColor;
-    
-    if (y > 0.1) {
-        // Upper sky: blend from horizon to zenith
-        float t = smoothstep(0.1, 0.8, y);
-        skyColor = mix(horizon, zenith, t);
-        skyColor = mix(skyColor, midday, smoothstep(0.0, 0.4, y));
-    } else if (y > -0.05) {
-        // Horizon band
-        skyColor = horizon;
-    } else {
-        // Below horizon
-        skyColor = mix(horizon, below, smoothstep(-0.05, -0.5, y));
-    }
-    
-    // Sun disc
-    float sunDot = max(dot(dir, sunDir), 0.0);
-    float sun = pow(sunDot, 500.0) * 2.0;
-    float sunGlow = pow(sunDot, 20.0) * 0.6;
-    float sunHalo = pow(sunDot, 3.0) * 0.2;
-    
-    vec3 sunColor = vec3(1.0, 0.95, 0.8);
-    skyColor += sunColor * (sun + sunGlow + sunHalo);
-    
-    // Horizon glow
-    float horizonGlow = exp(-abs(y) * 4.0) * 0.3;
-    skyColor += vec3(1.0, 0.7, 0.4) * horizonGlow;
-    
-    // Atmospheric scattering near horizon
-    float horizonFactor = exp(-abs(y) * 3.0);
-    skyColor = mix(skyColor, horizon, horizonFactor * 0.4);
-    
-    FragColor = vec4(skyColor, 1.0);
-}
-)";
 
 // ── Static state ────────────────────────────────────────────────────
 
@@ -350,11 +119,13 @@ static const float SHADOW_NEAR_PLANE = 5.0f;  // Distance from light to near pla
 // ── Helpers ─────────────────────────────────────────────────────────
 
 static void compileDefaultShader() {
-    // Use the material shader (with shadow mapping & PBR lighting)
-    s_shaderProg = CoreEngine::CreateShaderProgram(material_vs, material_fs);
+    s_shaderProg = LoadShaderProgram("material.vert", "material.frag");
+    if (s_shaderProg == 0) {
+        fprintf(stderr, "[Shader] Failed to compile default shader program!\n");
+        return;
+    }
     glUseProgram(s_shaderProg);
 
-    // Set initial camera uniforms
     auto view = glm::lookAt(
         glm::vec3(s_cameraPos.x, s_cameraPos.y, s_cameraPos.z),
         glm::vec3(s_cameraTarget.x, s_cameraTarget.y, s_cameraTarget.z),
@@ -988,27 +759,7 @@ void DrawGrid(int divisions, float unit, float halfExtent, const glm::mat4& view
         cachedDivisions = divisions;
 
         if (gridShaderProg) glDeleteProgram(gridShaderProg);
-        const char* g_vs = R"(
-            #version 330 core
-            layout(location = 0) in vec3 aPos;
-            uniform mat4 uView;
-            uniform mat4 uProjection;
-            uniform vec3 uColor;
-            out vec3 vColor;
-            void main() {
-                gl_Position = uProjection * uView * vec4(aPos, 1.0);
-                vColor = uColor;
-            }
-        )";
-        const char* g_fs = R"(
-            #version 330 core
-            in vec3 vColor;
-            out vec4 FragColor;
-            void main() {
-                FragColor = vec4(vColor, 1.0);
-            }
-        )";
-        gridShaderProg = CoreEngine::CreateShaderProgram(g_vs, g_fs);
+        gridShaderProg = LoadShaderProgram("grid.vert", "grid.frag");
         gridInited = true;
     }
 
@@ -1113,27 +864,8 @@ void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection
 
     // Use a yellow color shader for the bounds
     static GLuint boundsShaderProg = 0;
-    static bool boundsShaderInited = false;
-    if (!boundsShaderInited) {
-        const char* b_vs = R"(
-            #version 330 core
-            layout(location = 0) in vec3 aPos;
-            uniform mat4 uModel;
-            uniform mat4 uView;
-            uniform mat4 uProjection;
-            void main() {
-                gl_Position = uProjection * uView * uModel * vec4(aPos, 1.0);
-            }
-        )";
-        const char* b_fs = R"(
-            #version 330 core
-            out vec4 FragColor;
-            void main() {
-                FragColor = vec4(1.0, 0.8, 0.0, 1.0);
-            }
-        )";
-        boundsShaderProg = CoreEngine::CreateShaderProgram(b_vs, b_fs);
-        boundsShaderInited = true;
+    if (boundsShaderProg == 0) {
+        boundsShaderProg = LoadShaderProgram("bounds.vert", "bounds.frag");
     }
 
     // Save the original program before switching
@@ -1224,7 +956,7 @@ void CoreEngine::InitSkybox() {
     glBindVertexArray(0);
 
     // Create skybox shader
-    s_skyboxProg = CoreEngine::CreateShaderProgram(skybox_vs, skybox_fs);
+    s_skyboxProg = LoadShaderProgram("skybox.vert", "skybox.frag");
 
     s_skyboxInited = true;
 }
@@ -1273,13 +1005,13 @@ Texture CoreEngine::LoadTexture(const std::string& path) {
     tex.height = 0;
     tex.channels = 0;
 
-    // stb_image loads with flipped Y by default; flip horizontally for GL
-    stbi_set_flip_vertically_on_load(false);
+    // stb_image loads with origin at top-left for most formats.
+    // OpenGL expects bottom-left origin, so flip during load.
+    stbi_set_flip_vertically_on_load(true);
     unsigned char* data = stbi_load(path.c_str(), &tex.width, &tex.height, &tex.channels, 4);
     if (!data) {
-        fprintf(stderr, "[Texture] Failed to load: %s (stb error: %s)\n", 
-                path.c_str(), stbi_failure_reason() ? stbi_failure_reason() : "unknown");
-        stbi_image_free(data);
+        fprintf(stderr, "[Texture] Failed to load: %s (stb error: %s)\n",
+            path.c_str(), stbi_failure_reason() ? stbi_failure_reason() : "unknown");
         return tex;
     }
 
@@ -1324,12 +1056,13 @@ Texture CoreEngine::LoadTextureFromMemory(const unsigned char* data, int width, 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    // Determine GL format from channel count
+    // Determine internal format and source format to match channel count
+    GLenum internalFormat = GL_RGBA;
     GLenum format = GL_RGBA;
-    if (channels == 3) format = GL_RGB;
-    else if (channels == 1) format = GL_RED;
+    if (channels == 3) { internalFormat = GL_RGB; format = GL_RGB; }
+    else if (channels == 1) { internalFormat = GL_R; format = GL_RED; }
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
     GLenum texErr = glGetError();
     if (texErr != GL_NO_ERROR) {
         printf("[LoadTextureFromMemory] glTexImage2D error: %u\n", texErr);
@@ -1452,7 +1185,7 @@ void CoreEngine::InitShadowMap(int width, int height) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     // Compile shadow depth shader
-    s_shadowDepthProg = CoreEngine::CreateShaderProgram(shadow_depth_vs, shadow_depth_fs);
+    s_shadowDepthProg = LoadShaderProgram("shadow_depth.vert", "shadow_depth.frag");
 
     s_shadowInited = true;
     printf("[ShadowMap] Initialized %dx%d shadow map\n", width, height);

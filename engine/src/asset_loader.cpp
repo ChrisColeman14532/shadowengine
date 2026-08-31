@@ -202,15 +202,14 @@ namespace AssetLoader {
                     const unsigned char* src = reinterpret_cast<const unsigned char*>(aiTex->pcData);
 
                     // Convert ARGB -> RGBA
+                    // FBX stores uncompressed textures as ARGB (A, R, G, B)
                     for (size_t j = 0; j < pixelCount; ++j) {
                         const unsigned char* srcPixel = &src[j * 4];
                         unsigned char* dst = &etex.data[j * 4];
-                        // FBX embedded textures are typically stored as ABGR or ARGB
-                        // Try ABGR first (common for Maya/3ds Max exported FBX)
-                        dst[0] = srcPixel[2];  // R from B
-                        dst[1] = srcPixel[1];  // G from G
-                        dst[2] = srcPixel[0];  // B from R
-                        dst[3] = srcPixel[3];  // A from A
+                        dst[0] = srcPixel[1];  // R
+                        dst[1] = srcPixel[2];  // G
+                        dst[2] = srcPixel[3];  // B
+                        dst[3] = srcPixel[0];  // A
                     }
                     etex.width = aiTex->mWidth;
                     etex.height = aiTex->mHeight;

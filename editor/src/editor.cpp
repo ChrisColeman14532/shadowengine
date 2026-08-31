@@ -23,7 +23,7 @@ static bool g_showSceneHierarchy = true;
 static bool g_showInspector = true;
 static bool g_showStatusBar = false;
 static bool g_triggerFileDialog = false;
-static bool g_showShadows = false;  // DISABLED for debugging
+static bool g_showShadows = true;   // Shadows enabled by default
 
 // Console log storage
 static std::vector<std::string> g_consoleLog;
@@ -903,8 +903,10 @@ namespace Editor {
 
 
 
-        // DISABLED shadow pass for debugging
-        // CoreEngine::DrawShadowPass();
+        // ── Shadow Pass ──────────────────────────────────────────────
+        if (g_showShadows) {
+            CoreEngine::DrawShadowPass();
+        }
 
         // ── Main Pass: Render with shadow mapping ──────────────────────
         GLuint prog = CoreEngine::GetShaderProgram();
