@@ -327,9 +327,6 @@ static uint32_t s_cameraObjectId = 0;
 
 static bool s_engineInited = false;
 
-// Material-based scene objects
-static std::vector<CoreEngine::SceneObjectWithMaterial> s_sceneObjectsWithMat;
-
 // Skybox state
 static GLuint s_skyboxVBO = 0;
 static GLuint s_skyboxVAO = 0;
@@ -506,7 +503,6 @@ void Shutdown() {
 
     // Release GPU meshes while the GL context is still alive;
     // shared refs (scene objects, templates) free their VAOs/VBOs/EBOs here
-    s_sceneObjects.clear();
     s_primitiveMeshes.clear();
 
     if (s_window) glfwDestroyWindow(s_window);
@@ -827,11 +823,12 @@ void DestroyMesh(PrimitiveMesh& mesh) {
 
 std::vector<SceneObject>& GetSceneObjects() { return s_sceneObjects; }
 
-SceneObject& AddToScene(const std::string& name, MeshPtr mesh) {
+SceneObject& AddToScene(const std::string& name, MeshPtr mesh, Material mat) {
     SceneObject obj;
     obj.id = s_nextSceneObjectId++;
     obj.name = name;
     obj.mesh = std::move(mesh);
+    obj.material = std::move(mat);
     s_sceneObjects.push_back(std::move(obj));
     return s_sceneObjects.back();
 }
@@ -840,13 +837,6 @@ void ClearScene() {
     s_selectedObjectId = 0;
     s_cameraObjectId = 0;  // Reset so camera gets recreated on next CreateCameraObject()
     s_sceneObjects.clear();
-    s_sceneObjectsWithMat.clear();
-}
-
-void ClearSceneWithMaterials() {
-    s_selectedObjectId = 0;
-    s_cameraObjectId = 0;  // Reset so camera gets recreated on next CreateCameraObject()
-    s_sceneObjectsWithMat.clear();
 }
 
 void RemoveFromScene(uint32_t id) {
@@ -854,16 +844,6 @@ void RemoveFromScene(uint32_t id) {
         if (it->id == id) {
             if (s_selectedObjectId == id) s_selectedObjectId = 0;
             s_sceneObjects.erase(it);
-            return;
-        }
-    }
-}
-
-void RemoveFromSceneWithMaterials(uint32_t id) {
-    for (auto it = s_sceneObjectsWithMat.begin(); it != s_sceneObjectsWithMat.end(); ++it) {
-        if (it->id == id) {
-            if (s_selectedObjectId == id) s_selectedObjectId = 0;
-            s_sceneObjectsWithMat.erase(it);
             return;
         }
     }
@@ -1057,20 +1037,11 @@ void DrawGrid(int divisions, float unit, float halfExtent, const glm::mat4& view
 // ── Selected Object Bounds ──────────────────────────────────────────
 
 void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection) {
-    // Find the selected object in either scene vector
+    // Find the selected object
     SceneObject* sel = nullptr;
     uint32_t selectedId = s_selectedObjectId;
-
-    // Try s_sceneObjects first (regular objects)
     for (auto& obj : s_sceneObjects) {
         if (obj.id == selectedId) { sel = &obj; break; }
-    }
-
-    // If not found, try s_sceneObjectsWithMat (includes camera)
-    if (!sel) {
-        for (auto& obj : s_sceneObjectsWithMat) {
-            if (obj.id == selectedId) { sel = &obj; break; }
-        }
     }
 
     if (!sel) return;
@@ -1400,26 +1371,7 @@ Material CoreEngine::CreateDefaultMaterial() {
     };
 }
 
-// ── Static state for material-based scene ───────────────────────────
 
-static GLuint s_materialShaderProg = 0;
-static bool s_materialShaderInited = false;
-
-// ── Get scene objects with materials ───────────────────────────────
-
-std::vector<CoreEngine::SceneObjectWithMaterial>& GetSceneObjectsWithMaterials() {
-    return s_sceneObjectsWithMat;
-}
-
-CoreEngine::SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat) {
-    SceneObjectWithMaterial obj;
-    obj.id = s_nextSceneObjectId++;
-    obj.name = name;
-    obj.mesh = std::move(mesh);
-    obj.material = mat;
-    s_sceneObjectsWithMat.push_back(std::move(obj));
-    return s_sceneObjectsWithMat.back();
-}
 
 // ── Shadow Mapping Implementation ─────────────────────────────────
 
@@ -1524,8 +1476,8 @@ void CoreEngine::DrawShadowPass() {
         glUniformMatrix4fv(lsmLoc, 1, GL_FALSE, glm::value_ptr(lightSpaceMat));
     }
 
-    // Render all scene objects with materials
-    auto& scene = GetSceneObjectsWithMaterials();
+    // Render all scene objects
+    auto& scene = GetSceneObjects();
     for (auto& obj : scene) {
         auto& mesh = obj.mesh;
         if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
@@ -1554,10 +1506,6 @@ void CoreEngine::DrawShadowPass() {
 
     // Restore default framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-}
-
-void CoreEngine::DrawShadowPassWithMaterials() {
-    DrawShadowPass();
 }
 
 void CoreEngine::CleanupShadowMap() {
@@ -1590,8 +1538,8 @@ GLuint CoreEngine::GetShadowMapFBO() {
 
 // ── Camera as scene object ────────────────────────────────────────
 
-static CoreEngine::SceneObjectWithMaterial* GetCameraObject() {
-    for (auto& obj : s_sceneObjectsWithMat) {
+static CoreEngine::SceneObject* GetCameraObject() {
+    for (auto& obj : s_sceneObjects) {
         if (obj.id == s_cameraObjectId) return &obj;
     }
     return nullptr;
@@ -1604,12 +1552,12 @@ bool CoreEngine::IsCameraObjectId(uint32_t id) { return id == s_cameraObjectId; 
 // Called from editor to create the camera object
 void CoreEngine::CreateCameraObject() {
     if (s_cameraObjectId != 0) return; // already created
-    
+
     auto cubeMesh = CreateBox({1, 1, 1});
     cubeMesh.name = "cube";
     s_cameraObjectId = s_nextSceneObjectId++;
 
-    SceneObjectWithMaterial cam;
+    SceneObject cam;
     cam.id = s_cameraObjectId;
     cam.name = "Camera";
     cam.mesh = CreateMesh(std::move(cubeMesh));
@@ -1618,7 +1566,7 @@ void CoreEngine::CreateCameraObject() {
     cam.material.name = "camera_material";
     cam.material.baseColor = glm::vec3(0.2f, 0.6f, 1.0f); // blue
     cam.material.useMaterial = true;
-    s_sceneObjectsWithMat.push_back(std::move(cam));
+    s_sceneObjects.push_back(std::move(cam));
 }
 
 // Called when camera object is moved via inspector

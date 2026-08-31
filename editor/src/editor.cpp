@@ -115,7 +115,7 @@ namespace Editor {
         if (w < 1) w = 1280;
         if (h < 1) h = 720;
 
-        CoreEngine::ClearSceneWithMaterials();
+        CoreEngine::ClearScene();
         CoreEngine::CreateCameraObject();  // Restore camera after clearing scene
 
         auto loadedMat = CoreEngine::CreateDefaultMaterial();
@@ -143,7 +143,7 @@ namespace Editor {
         printf("[Editor] Final material baseColor=(%.2f, %.2f, %.2f), diffuseTexture.id=%u\n",
                loadedMat.baseColor.r, loadedMat.baseColor.g, loadedMat.baseColor.b, loadedMat.diffuseTexture.id);
 
-        CoreEngine::AddToSceneWithMaterial("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)), loadedMat);
+        CoreEngine::AddToScene("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)), loadedMat);
 
         float maxX = fmaxf(modelExtent.x, modelExtent.y);
         float maxDim = fmaxf(maxX, modelExtent.z);
@@ -175,7 +175,7 @@ namespace Editor {
             if (ImGui::Combo("##addItem", &selectedItem, addItemOptions, IM_ARRAYSIZE(addItemOptions))) {
                 auto meshCube = CoreEngine::GetPrimitiveMesh("cube");
                 auto meshPlane = CoreEngine::GetPrimitiveMesh("plane");
-                auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                auto& scene = CoreEngine::GetSceneObjects();
                 uint32_t nextId = CoreEngine::GetNextSceneObjectId();
 
                 switch (selectedItem) {
@@ -183,7 +183,7 @@ namespace Editor {
                         if (meshCube) {
                             auto mat = CoreEngine::CreateDefaultMaterial();
                             mat.name = "cube_material";
-                            auto& obj = CoreEngine::AddToSceneWithMaterial("cube_" + std::to_string(nextId), meshCube, mat);
+                            auto& obj = CoreEngine::AddToScene("cube_" + std::to_string(nextId), meshCube, mat);
                             obj.position = {0, 0, 0};
                             obj.scale = {1, 1, 1};
                             ConsoleLog("Added cube");
@@ -194,7 +194,7 @@ namespace Editor {
                         if (meshPlane) {
                             auto mat = CoreEngine::CreateDefaultMaterial();
                             mat.name = "plane_material";
-                            auto& obj = CoreEngine::AddToSceneWithMaterial("plane_" + std::to_string(nextId), meshPlane, mat);
+                            auto& obj = CoreEngine::AddToScene("plane_" + std::to_string(nextId), meshPlane, mat);
                             obj.position = {0, -1.0f, 0};
                             obj.scale = {10, 1, 10};
                             ConsoleLog("Added plane");
@@ -213,14 +213,14 @@ namespace Editor {
             ImGui::Separator();
             ImGui::Text("Scene Objects");
 
-            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+            auto& scene = CoreEngine::GetSceneObjects();
             uint32_t selectedId = CoreEngine::GetSelectedObjectId();
 
             if (scene.empty()) {
                 ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "No objects in scene");
             } else {
                 // Track which object to rename (popup must be handled OUTSIDE the loop)
-                static CoreEngine::SceneObjectWithMaterial* g_renameObj = nullptr;
+                static CoreEngine::SceneObject* g_renameObj = nullptr;
 
                 for (auto& obj : scene) {
                     bool isSelected = (obj.id == selectedId);
@@ -257,8 +257,7 @@ namespace Editor {
 
             ImGui::Separator();
             if (ImGui::Button("Clear Scene", ImVec2(-1, 0))) {
-                CoreEngine::ClearSceneWithMaterials();
-                CoreEngine::GetSceneObjectsWithMaterials().clear();
+                CoreEngine::ClearScene();
                 ConsoleLog("Scene cleared");
             }
         }
@@ -277,9 +276,9 @@ namespace Editor {
         ImGui::SetNextWindowPos(inspectorPos);
         ImGui::SetNextWindowSize(ImVec2(320, panelH));
         if (ImGui::Begin("Inspector", nullptr)) {
-            auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+            auto& scene = CoreEngine::GetSceneObjects();
             uint32_t selectedId = CoreEngine::GetSelectedObjectId();
-            CoreEngine::SceneObjectWithMaterial* selected = nullptr;
+            CoreEngine::SceneObject* selected = nullptr;
 
             for (auto& obj : scene) {
                 if (obj.id == selectedId) {
@@ -463,7 +462,7 @@ namespace Editor {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
                 if (ImGui::Button("Delete Object", ImVec2(-1, 0))) {
-                    CoreEngine::RemoveFromSceneWithMaterials(selected->id);
+                    CoreEngine::RemoveFromScene(selected->id);
                     // Clean up texture if loaded
                     if (selected->material.diffuseTexture.id) {
                         CoreEngine::DestroyTexture(selected->material.diffuseTexture);
@@ -580,9 +579,9 @@ namespace Editor {
                         mat.useMaterial = true;
                         CoreEngine::Texture tex = GenerateCheckerboardTexture();
                         mat.diffuseTexture = tex;
-                        auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                        auto& scene = CoreEngine::GetSceneObjects();
                         uint32_t nextId = CoreEngine::GetNextSceneObjectId();
-                        auto& obj = CoreEngine::AddToSceneWithMaterial("test_checkerboard", meshCube, mat);
+                        auto& obj = CoreEngine::AddToScene("test_checkerboard", meshCube, mat);
                         obj.position = {0, 0, 0};
                         obj.scale = {1, 1, 1};
                         ConsoleLog("Added test cube with checkerboard texture (verify textures are working!)");
@@ -712,7 +711,7 @@ namespace Editor {
             if (action == GLFW_PRESS || action == GLFW_REPEAT) {
                 if (!ImGui::GetIO().WantCaptureKeyboard) {
                     float speed = 0.05f;
-                    auto& scene = CoreEngine::GetSceneObjectsWithMaterials();
+                    auto& scene = CoreEngine::GetSceneObjects();
                     uint32_t selectedId = CoreEngine::GetSelectedObjectId();
                     for (auto& obj : scene) {
                         if (obj.id == selectedId && obj.name.find("cube") != std::string::npos) {
@@ -769,7 +768,7 @@ namespace Editor {
 
     void ShutDown(GLFWwindow* window) {
         CoreEngine::CleanupShadowMap();
-        CoreEngine::ClearSceneWithMaterials();
+        CoreEngine::ClearScene();
         ShutdownImGui();
     }
 
@@ -818,7 +817,7 @@ namespace Editor {
         // Draw skybox first (background) - pass viewport aspect ratio
         CoreEngine::DrawSkybox(aspect);
 
-        auto& sceneObjs = CoreEngine::GetSceneObjectsWithMaterials();
+        auto& sceneObjs = CoreEngine::GetSceneObjects();
 
         auto cameraPos = CoreEngine::GetCameraPosition();
         auto cameraTarget = CoreEngine::GetCameraTarget();

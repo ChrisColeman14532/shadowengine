@@ -74,7 +74,38 @@ namespace CoreEngine {
     using MeshPtr = std::shared_ptr<PrimitiveMesh>;
     MeshPtr CreateMesh(PrimitiveMesh mesh);
 
-    // Scene object — placed by editor
+    // ── Textures ────────────────────────────────────────────────────
+
+    struct Texture {
+        GLuint id = 0;
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+    };
+    Texture LoadTexture(const std::string& path);
+    Texture LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels);
+    void DestroyTexture(Texture& tex);
+    void BindTexture(Texture& tex, GLuint unit);
+
+    // Register a texture for engine-managed lifetime (auto-destroyed on shutdown)
+    void RegisterTextureForLifetime(Texture& tex);
+
+    // ── Materials ───────────────────────────────────────────────────
+
+    struct Material {
+        std::string name = "default";
+        glm::vec3 baseColor = glm::vec3(0.5f);
+        glm::vec3 emissiveColor = glm::vec3(0.0f);
+        float metallic = 0.0f;    // 0 = non-metal, 1 = metal
+        float roughness = 1.0f;   // 0 = polished, 1 = rough
+        float ao = 1.0f;          // ambient occlusion multiplier
+        Texture diffuseTexture;   // id == 0 means no texture
+        Texture normalTexture;    // id == 0 means no texture
+        bool useMaterial = false;
+    };
+    Material CreateDefaultMaterial();
+
+    // Scene object — placed by editor (mesh + transform + material)
     struct SceneObject {
         uint32_t id = 0;
         std::string name;
@@ -82,6 +113,7 @@ namespace CoreEngine {
         Vector3 position  = {0, 0, 0};
         Vector3 rotation  = {0, 0, 0};   // Euler radians
         Vector3 scale     = {1, 1, 1};
+        Material material;                // PBR material
     };
 
     static constexpr const char* ENGINE_NAME   = "ShadowEngine";
@@ -117,11 +149,9 @@ namespace CoreEngine {
 
     // Scene management
     std::vector<SceneObject>& GetSceneObjects();
-    SceneObject& AddToScene(const std::string& name, MeshPtr mesh);
+    SceneObject& AddToScene(const std::string& name, MeshPtr mesh, Material mat);
     void ClearScene();
-    void ClearSceneWithMaterials();
     void RemoveFromScene(uint32_t id);
-    void RemoveFromSceneWithMaterials(uint32_t id);
     void SelectObject(uint32_t id);
     SceneObject* GetSelectedObject();
     uint32_t GetSelectedObjectId();
@@ -154,46 +184,6 @@ namespace CoreEngine {
     void InitSkybox();
     void DrawSkybox(float aspect = 1280.0f / 720.0f);
 
-    // ── Textures ────────────────────────────────────────────────────
-
-    struct Texture {
-        GLuint id = 0;
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-    };
-    Texture LoadTexture(const std::string& path);
-    Texture LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels);
-    void DestroyTexture(Texture& tex);
-    void BindTexture(Texture& tex, GLuint unit);
-
-    // Register a texture for engine-managed lifetime (auto-destroyed on shutdown)
-    void RegisterTextureForLifetime(Texture& tex);
-
-    // ── Materials ───────────────────────────────────────────────────
-
-    struct Material {
-        std::string name = "default";
-        glm::vec3 baseColor = glm::vec3(0.5f);
-        glm::vec3 emissiveColor = glm::vec3(0.0f);
-        float metallic = 0.0f;    // 0 = non-metal, 1 = metal
-        float roughness = 1.0f;   // 0 = polished, 1 = rough
-        float ao = 1.0f;          // ambient occlusion multiplier
-        Texture diffuseTexture;   // id == 0 means no texture
-        Texture normalTexture;    // id == 0 means no texture
-        bool useMaterial = false;
-    };
-    Material CreateDefaultMaterial();
-
-    // ── Scene object with material ──────────────────────────────────
-
-    // Extended scene object that can hold a material
-    struct SceneObjectWithMaterial : SceneObject {
-        Material material;
-    };
-    std::vector<SceneObjectWithMaterial>& GetSceneObjectsWithMaterials();
-    SceneObjectWithMaterial& AddToSceneWithMaterial(const std::string& name, MeshPtr mesh, Material mat);
-
     // ── Camera (as a scene object) ──────────────────────────────────
     uint32_t GetCameraObjectId();
     void SetCameraId(uint32_t id);
@@ -222,14 +212,11 @@ namespace CoreEngine {
     // Shadow map initialization / rendering
     void InitShadowMap(int width = 2048, int height = 2048);
     void DrawShadowPass();          // Render scene to shadow map
-    void DrawShadowPassWithMaterials();
+
     void CleanupShadowMap();        // Free shadow map FBO + texture
 
     // Get the shadow map for use in shaders
     GLuint GetShadowMapTexture();
     GLuint GetShadowMapFBO();
-
-    // ── Scene object with material ──────────────────────────────────
-
 
 } // namespace CoreEngine
