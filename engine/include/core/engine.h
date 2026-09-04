@@ -42,11 +42,13 @@ namespace CoreEngine {
         GLuint EBO = 0;
         uint32_t indexCount = 0;
         Vector3 halfExtent = {1.0f, 1.0f, 1.0f};  // AABB half-extents for bounding wireframe
+        Vector3 center = {0.0f, 0.0f, 0.0f};      // AABB center in mesh-local space
     };
 
     // Raw mesh data (used by FBX loader for merging)
     struct RawMeshData {
         std::string name;
+        int materialIndex = 0;  // index into FBX material list (aiMesh::mMaterialIndex)
         std::vector<float> vertices;
         std::vector<uint32_t> indices;
     };
@@ -66,6 +68,17 @@ namespace CoreEngine {
             int channels = 0;
         };
         std::vector<EmbeddedTexture> textures;
+        // Indices into `textures` for the first material's texture slots (-1 = none)
+        int diffuseTextureIndex = -1;
+        int normalTextureIndex = -1;
+        // Per-scene-material texture slot mapping + diffuse colors, so each
+        // sub-mesh can be rendered with ITS OWN material's texture.
+        struct MaterialTextureMap {
+            int diffuseIndex = -1;  // index into textures (-1 = none)
+            int normalIndex = -1;   // index into textures (-1 = none)
+        };
+        std::vector<MaterialTextureMap> materialTextures;  // one entry per scene material
+        std::vector<glm::vec3> materialColors;             // diffuse color per scene material
     };
 
     // Shared GPU mesh handle. When the last reference is dropped, the
@@ -75,6 +88,9 @@ namespace CoreEngine {
     MeshPtr CreateMesh(PrimitiveMesh mesh);
 
     // ── Textures ────────────────────────────────────────────────────
+    // GPU textures are reference-counted: the GL texture is deleted when
+    // the last TexturePtr referencing it is destroyed. Materials can
+    // freely copy/share the same texture.
 
     struct Texture {
         GLuint id = 0;
@@ -82,13 +98,10 @@ namespace CoreEngine {
         int height = 0;
         int channels = 0;
     };
-    Texture LoadTexture(const std::string& path);
-    Texture LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels);
-    void DestroyTexture(Texture& tex);
-    void BindTexture(Texture& tex, GLuint unit);
-
-    // Register a texture for engine-managed lifetime (auto-destroyed on shutdown)
-    void RegisterTextureForLifetime(Texture& tex);
+    using TexturePtr = std::shared_ptr<Texture>;
+    TexturePtr LoadTexture(const std::string& path);
+    TexturePtr LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels);
+    void BindTexture(const TexturePtr& tex, GLuint unit);
 
     // ── Materials ───────────────────────────────────────────────────
 
@@ -99,8 +112,8 @@ namespace CoreEngine {
         float metallic = 0.0f;    // 0 = non-metal, 1 = metal
         float roughness = 1.0f;   // 0 = polished, 1 = rough
         float ao = 1.0f;          // ambient occlusion multiplier
-        Texture diffuseTexture;   // id == 0 means no texture
-        Texture normalTexture;    // id == 0 means no texture
+        TexturePtr diffuseTexture;   // nullptr means no texture
+        TexturePtr normalTexture;    // nullptr means no texture
         bool useMaterial = false;
     };
     Material CreateDefaultMaterial();
@@ -168,6 +181,7 @@ namespace CoreEngine {
     Vector3 GetCameraOffset();
     void SetCameraOffset(Vector3 offset);
     glm::mat4 GetProjectionMatrix(float fov, float aspect);
+    glm::mat4 GetProjectionMatrix(float fov, float aspect, float nearPlane, float farPlane);
     GLuint GetModelUniformLocation(GLuint prog, bool& found);
 
     // Internal helpers (used by editor)
@@ -182,7 +196,7 @@ namespace CoreEngine {
 
     // Skybox (procedural gradient with sun)
     void InitSkybox();
-    void DrawSkybox(float aspect = 1280.0f / 720.0f);
+    void DrawSkybox(glm::vec3 cameraPosition, float aspect = 1280.0f / 720.0f);
 
     // ── Camera (as a scene object) ──────────────────────────────────
     uint32_t GetCameraObjectId();
@@ -218,5 +232,7 @@ namespace CoreEngine {
     // Get the shadow map for use in shaders
     GLuint GetShadowMapTexture();
     GLuint GetShadowMapFBO();
+    int GetShadowMapWidth();
+    int GetShadowMapHeight();
 
 } // namespace CoreEngine

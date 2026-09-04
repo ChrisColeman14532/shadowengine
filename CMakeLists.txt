@@ -40,9 +40,11 @@ FetchContent_MakeAvailable(imgui)
 add_library(engine STATIC
     engine/src/engine.cpp
     engine/src/asset_loader.cpp
+    engine/src/stb_image_loader.cpp
 )
 target_include_directories(engine PUBLIC
     engine/include
+    engine/src
 )
 target_link_libraries(engine PUBLIC
     glfw

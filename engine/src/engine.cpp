@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <filesystem>
 #if defined(_WIN32)
 #include <windows.h>
@@ -19,48 +20,87 @@
 //   3. Relative to executable path
 
 static std::string LoadShaderSource(const std::string& filename) {
+    // Track every path we try so a failure can print a full trace
+    struct Attempt { std::string path; const char* source; };
+    std::vector<Attempt> attempts;
+
+    auto tryFile = [&](const std::string& path, const char* source) -> std::string {
+        std::ifstream f(path);
+        if (f.good()) {
+            fprintf(stderr, "[Shader] Loaded '%s' from: %s\n", filename.c_str(), path.c_str());
+            return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        }
+        attempts.push_back({path, source});
+        return "";
+    };
+
+    // 1. SHADOW_ENGINE_SHADERS env var
     const char* env = std::getenv("SHADOW_ENGINE_SHADERS");
     if (env && env[0]) {
         std::string base(env);
         if (base.back() != '/' && base.back() != '\\') base += '/';
-        std::string path = base + filename;
-        std::ifstream f(path);
-        if (f.good()) { std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); return src; }
+        std::string src = tryFile(base + filename, "env");
+        if (!src.empty()) return src;
     }
 
-    std::vector<std::string> candidates = {
+    // 2/3. Relative to current working directory
+    const std::vector<std::string> cwdCandidates = {
         "shader/" + filename,
         filename,
     };
-    for (const auto& c : candidates) {
-        std::ifstream f(c);
-        if (f.good()) {
-            return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    for (const auto& c : cwdCandidates) {
+        std::string src = tryFile(c, "cwd");
+        if (!src.empty()) return src;
+    }
+
+    // 4. Relative to executable directory (independent of CWD).
+    //    Handles both '/' and '\\' separators.
+    char buf[4096] = {0};
+    bool haveExe = false;
+#if defined(_WIN32)
+    if (GetModuleFileNameA(nullptr, buf, sizeof(buf)) > 0) haveExe = true;
+#else
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len != -1) { buf[len] = '\0'; haveExe = true; }
+#endif
+    std::string exePath(buf);
+    std::string exeDir;
+    if (haveExe) {
+        exeDir = exePath;
+        auto slash = exeDir.find_last_of("/\\");
+        if (slash != std::string::npos) exeDir.erase(slash + 1);  // keep trailing separator
+        else exeDir = ".";
+
+        // Ensure a trailing separator, then use the path's own separator
+        // style so the printed path is clean
+        if (exeDir.back() != '/' && exeDir.back() != '\\') exeDir += '/';
+        const std::string sep(1, exeDir.back());
+
+        // CMake copies shaders next to the exe (build/<Config>/shader/).
+        // Also try the legacy layout one level up (build/shader/).
+        const std::vector<std::string> exeCandidates = {
+            exeDir + "shader" + sep + filename,
+            exeDir + ".." + sep + "shader" + sep + filename,
+        };
+        for (const auto& c : exeCandidates) {
+            std::string src = tryFile(c, "exe");
+            if (!src.empty()) return src;
         }
     }
 
-    // Try relative to executable directory
-    char buf[4096];
+    // All paths failed — print full diagnostic
 #if defined(_WIN32)
-    GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    char cwd[4096] = {0};
+    GetCurrentDirectoryA(sizeof(cwd), cwd);
 #else
-    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-    if (len == -1) return "";
-    buf[len] = '\0';
+    char cwd[4096] = {0};
+    getcwd(cwd, sizeof(cwd));
 #endif
-    std::string exeDir(buf);
-    auto slash = exeDir.rfind('/');
-    if (slash != std::string::npos) exeDir.erase(slash + 1);
-    else exeDir = ".";
-
-    // Try exe/../shader/<filename>
-    std::string exePath = exeDir + "/../shader/" + filename;
-    std::ifstream f2(exePath);
-    if (f2.good()) {
-        return std::string((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
+    fprintf(stderr, "[Shader] FAILED to load '%s' (CWD: %s | EXE: %s)\n",
+            filename.c_str(), cwd, haveExe ? exePath.c_str() : "?");
+    for (const auto& a : attempts) {
+        fprintf(stderr, "[Shader]     tried [%s]: %s\n", a.source, a.path.c_str());
     }
-
-    fprintf(stderr, "[Shader] Failed to load shader: %s\n", filename.c_str());
     return "";
 }
 
@@ -82,7 +122,7 @@ static GLuint      s_shaderProg = 0;
 static GLuint      s_vao        = 0;
 static GLuint      s_vbo        = 0;
 
-static CoreEngine::Vector3 s_cameraPos    = {15, 12, 15};
+static CoreEngine::Vector3 s_cameraPos    = {15, 12, 25};
 static CoreEngine::Vector3 s_cameraTarget = {0, 0, 0};
 static CoreEngine::Vector3 s_cameraOffset = {0, -1.5f, -5};
 
@@ -372,9 +412,10 @@ GLuint CompileShader(GLenum type, const char* source) {
     if (!success) {
         GLint len;
         glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
-        char* log = (char*)alloca(len);
-        glGetShaderInfoLog(shader, len, nullptr, log);
-        fprintf(stderr, "Shader compile error:\n%s\n", log);
+        if (len <= 1) return shader;
+        std::vector<char> logBuffer(len);
+        glGetShaderInfoLog(shader, len, nullptr, logBuffer.data());
+        fprintf(stderr, "Shader compile error:\n%s\n", logBuffer.data());
     }
     return shader;
 }
@@ -657,13 +698,18 @@ void SetCameraOffset(Vector3 offset) {
     s_cameraPos = s_cameraTarget + offset;
 }
 void ResetCamera() {
-    s_cameraPos = {15, 12, 15};
+    s_cameraPos = {15, 12, 25};
     s_cameraTarget = {0, 0, 0};
     s_cameraOffset = s_cameraPos - s_cameraTarget;
 }
 
 glm::mat4 GetProjectionMatrix(float fov, float aspect) {
-    return glm::perspective(glm::radians(fov), aspect, 0.1f, 100.0f);
+    return GetProjectionMatrix(fov, aspect, 0.1f, 100.0f);
+}
+
+glm::mat4 GetProjectionMatrix(float fov, float aspect, float nearPlane, float farPlane) {
+    if (farPlane <= nearPlane) farPlane = nearPlane + 1.0f;
+    return glm::perspective(glm::radians(fov), aspect, nearPlane, farPlane);
 }
 
 GLuint GetModelUniformLocation(GLuint prog, bool& found) {
@@ -799,9 +845,11 @@ void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection
     if (!sel->mesh) return;
     if (sel->mesh->indexCount == 0) return;
 
-    // Use the mesh's stored half-extents (set at creation time)
+    // Use the mesh's stored AABB (set at creation time)
     Vector3 he = sel->mesh->halfExtent;
-    float extents[3] = {he.x, he.y, he.z};
+    Vector3 ctr = sel->mesh->center;
+    glm::vec3 extents(he.x, he.y, he.z);
+    glm::vec3 ctrOffset(ctr.x, ctr.y, ctr.z);
 
     // Define a unit cube (local space) and scale it via the model matrix.
     // The 8 corners of a unit cube centered at origin (from -1 to +1).
@@ -823,11 +871,12 @@ void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection
         {0,4}, {1,5}, {2,6}, {3,7}  // verticals
     };
 
-    // Build edge vertex data: scale local corners by halfExtent to get mesh-space bounds
+    // Build edge vertex data: scale local corners by halfExtent and offset
+    // by the AABB center to get mesh-space bounds
     float edgeVerts[24 * 3];
     for (int i = 0; i < 12; ++i) {
-        glm::vec3 p0 = localCorners[edgePairs[i][0]] * glm::vec3(extents[0], extents[1], extents[2]);
-        glm::vec3 p1 = localCorners[edgePairs[i][1]] * glm::vec3(extents[0], extents[1], extents[2]);
+        glm::vec3 p0 = localCorners[edgePairs[i][0]] * extents + ctrOffset;
+        glm::vec3 p1 = localCorners[edgePairs[i][1]] * extents + ctrOffset;
         edgeVerts[(i*6+0)] = p0.x;
         edgeVerts[(i*6+1)] = p0.y;
         edgeVerts[(i*6+2)] = p0.z;
@@ -961,15 +1010,13 @@ void CoreEngine::InitSkybox() {
     s_skyboxInited = true;
 }
 
-void CoreEngine::DrawSkybox(float aspect) {
+void CoreEngine::DrawSkybox(glm::vec3 cameraPosition, float aspect) {
     if (!s_skyboxInited || !s_window) return;
 
-    // Get camera position and projection
-    auto camPos = s_cameraPos;
-    auto camTarget = s_cameraTarget;
+    // Use the passed camera position so the skybox tracks the actual view camera
     glm::mat4 view = glm::lookAt(
-        glm::vec3(camPos.x, camPos.y, camPos.z),
-        glm::vec3(camTarget.x, camTarget.y, camTarget.z),
+        cameraPosition,
+        glm::vec3(0.0f),  // look at origin (center of skybox)
         glm::vec3(0, 1, 0));
 
     glm::mat4 projection = glm::perspective(glm::radians(60.0f), aspect, 0.1f, 100.0f);
@@ -995,98 +1042,75 @@ void CoreEngine::DrawSkybox(float aspect) {
 
 // ── Textures ────────────────────────────────────────────────────────
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_STATIC
-#include "core/stb_image.h"
+#include "stb_image_loader.h"
 
-Texture CoreEngine::LoadTexture(const std::string& path) {
-    Texture tex;
-    tex.width = 0;
-    tex.height = 0;
-    tex.channels = 0;
+namespace {
+    // Shared ownership: the GL texture is deleted when the last
+    // TexturePtr referencing it is destroyed (main thread, context current).
+    CoreEngine::TexturePtr MakeTexture() {
+        return CoreEngine::TexturePtr(new CoreEngine::Texture(), [](CoreEngine::Texture* t) {
+            if (t->id) glDeleteTextures(1, &t->id);
+            delete t;
+        });
+    }
 
+    // Upload raw pixel data to the GPU. Returns nullptr on failure.
+    CoreEngine::TexturePtr UploadTexture(const unsigned char* data, int width, int height, int channels) {
+        CoreEngine::TexturePtr tex = MakeTexture();
+        tex->width = width;
+        tex->height = height;
+        tex->channels = channels;
+
+        glGenTextures(1, &tex->id);
+        if (tex->id == 0) return nullptr;
+        glBindTexture(GL_TEXTURE_2D, tex->id);
+
+        // Set texture parameters
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // Determine internal format and source format to match channel count
+        GLenum internalFormat = GL_RGBA;
+        GLenum format = GL_RGBA;
+        if (channels == 3) { internalFormat = GL_RGB; format = GL_RGB; }
+        else if (channels == 1) { internalFormat = GL_R; format = GL_RED; }
+
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return tex;
+    }
+}
+
+CoreEngine::TexturePtr CoreEngine::LoadTexture(const std::string& path) {
     // stb_image loads with origin at top-left for most formats.
     // OpenGL expects bottom-left origin, so flip during load.
+    // The flip flag is global stb state, so restore the default afterwards.
     stbi_set_flip_vertically_on_load(true);
-    unsigned char* data = stbi_load(path.c_str(), &tex.width, &tex.height, &tex.channels, 4);
+    int w = 0, h = 0, c = 0;
+    unsigned char* data = stbi_load(path.c_str(), &w, &h, &c, 4);
+    stbi_set_flip_vertically_on_load(false);
     if (!data) {
         fprintf(stderr, "[Texture] Failed to load: %s (stb error: %s)\n",
             path.c_str(), stbi_failure_reason() ? stbi_failure_reason() : "unknown");
-        return tex;
+        return nullptr;
     }
-
-    glGenTextures(1, &tex.id);
-    glBindTexture(GL_TEXTURE_2D, tex.id);
-
-    // Set texture parameters
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex.width, tex.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    glBindTexture(GL_TEXTURE_2D, 0);
+    CoreEngine::TexturePtr tex = UploadTexture(data, w, h, 4);
     stbi_image_free(data);
-
     return tex;
 }
 
-Texture CoreEngine::LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels) {
-    Texture tex;
-    tex.width = width;
-    tex.height = height;
-    tex.channels = channels;
-
-    printf("[LoadTextureFromMemory] width=%d height=%d channels=%d data=%p\n", width, height, channels, data);
-
-    glGenTextures(1, &tex.id);
-    printf("[LoadTextureFromMemory] glGenTextures returned id=%u\n", tex.id);
-    
-    if (tex.id == 0) {
-        printf("[LoadTextureFromMemory] ERROR: glGenTextures failed! OpenGL error: %u\n", glGetError());
-        return tex;
-    }
-    
-    glBindTexture(GL_TEXTURE_2D, tex.id);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    // Determine internal format and source format to match channel count
-    GLenum internalFormat = GL_RGBA;
-    GLenum format = GL_RGBA;
-    if (channels == 3) { internalFormat = GL_RGB; format = GL_RGB; }
-    else if (channels == 1) { internalFormat = GL_R; format = GL_RED; }
-
-    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-    GLenum texErr = glGetError();
-    if (texErr != GL_NO_ERROR) {
-        printf("[LoadTextureFromMemory] glTexImage2D error: %u\n", texErr);
-    }
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    glBindTexture(GL_TEXTURE_2D, 0);
-    return tex;
+CoreEngine::TexturePtr CoreEngine::LoadTextureFromMemory(const unsigned char* data, int width, int height, int channels) {
+    return UploadTexture(data, width, height, channels);
 }
 
-void CoreEngine::DestroyTexture(Texture& tex) {
-    if (tex.id) {
-        glDeleteTextures(1, &tex.id);
-        tex.id = 0;
-    }
-    tex.width = 0;
-    tex.height = 0;
-    tex.channels = 0;
-}
-
-void CoreEngine::BindTexture(Texture& tex, GLuint unit) {
-    if (tex.id == 0) return;
+void CoreEngine::BindTexture(const CoreEngine::TexturePtr& tex, GLuint unit) {
+    if (!tex || tex->id == 0) return;
     glActiveTexture(GL_TEXTURE0 + unit);
-    glBindTexture(GL_TEXTURE_2D, tex.id);
+    glBindTexture(GL_TEXTURE_2D, tex->id);
 }
 
 // ── Materials ───────────────────────────────────────────────────────
@@ -1099,7 +1123,7 @@ Material CoreEngine::CreateDefaultMaterial() {
         0.0f,             // metallic
         1.0f,             // roughness
         1.0f,             // AO
-        {}, {},           // diffuseTexture, normalTexture (id=0 = no texture)
+        {}, {},           // diffuseTexture, normalTexture (nullptr = no texture)
         false
     };
 }
@@ -1194,6 +1218,11 @@ void CoreEngine::InitShadowMap(int width, int height) {
 void CoreEngine::DrawShadowPass() {
     if (!s_shadowInited) return;
 
+    // Save the caller's viewport so we don't leak the shadow-map
+    // viewport into the main pass.
+    GLint savedViewport[4];
+    glGetIntegerv(GL_VIEWPORT, savedViewport);
+
     // Bind shadow FBO for depth rendering
     glBindFramebuffer(GL_FRAMEBUFFER, s_shadowFBO);
     glViewport(0, 0, s_shadowWidth, s_shadowHeight);
@@ -1209,9 +1238,11 @@ void CoreEngine::DrawShadowPass() {
         glUniformMatrix4fv(lsmLoc, 1, GL_FALSE, glm::value_ptr(lightSpaceMat));
     }
 
-    // Render all scene objects
+    // Render all scene objects (skip the camera visual — it must not
+    // cast a shadow blob at the camera position)
     auto& scene = GetSceneObjects();
     for (auto& obj : scene) {
+        if (obj.id == s_cameraObjectId) continue;
         auto& mesh = obj.mesh;
         if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
@@ -1237,8 +1268,9 @@ void CoreEngine::DrawShadowPass() {
         glBindVertexArray(0);
     }
 
-    // Restore default framebuffer
+    // Restore default framebuffer and the caller's viewport
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
 }
 
 void CoreEngine::CleanupShadowMap() {
@@ -1267,6 +1299,14 @@ GLuint CoreEngine::GetShadowMapTexture() {
 
 GLuint CoreEngine::GetShadowMapFBO() {
     return s_shadowFBO;
+}
+
+int CoreEngine::GetShadowMapWidth() {
+    return s_shadowWidth;
+}
+
+int CoreEngine::GetShadowMapHeight() {
+    return s_shadowHeight;
 }
 
 // ── Camera as scene object ────────────────────────────────────────

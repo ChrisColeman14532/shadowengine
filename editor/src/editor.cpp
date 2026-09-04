@@ -23,6 +23,7 @@ static bool g_showSceneHierarchy = true;
 static bool g_showInspector = true;
 static bool g_showStatusBar = false;
 static bool g_triggerFileDialog = false;
+static bool g_smoothNormals = false;  // Recompute smooth normals when loading FBX
 static bool g_showShadows = true;   // Shadows enabled by default
 
 // Console log storage
@@ -43,10 +44,15 @@ static bool g_isOrbiting = false;
 static glm::vec3 g_cameraPanOffset = glm::vec3(0, 0, 0);
 static bool g_isPanning = false;
 
+// Camera rotation state (yaw + pitch) - controlled by right-click drag
+static float g_cameraYaw = 0.0f;
+static float g_cameraPitch = 0.0f;
+static bool g_isRotating = false;
+
 namespace Editor {
 
     // Generate a colored checkerboard texture (128x128)
-    static CoreEngine::Texture GenerateCheckerboardTexture() {
+    static CoreEngine::TexturePtr GenerateCheckerboardTexture() {
         const int size = 128;
         const int checkerSize = 16;  // 8x8 checkerboard
         unsigned char* pixels = new unsigned char[size * size * 4];
@@ -73,7 +79,7 @@ namespace Editor {
             }
         }
 
-        CoreEngine::Texture tex = CoreEngine::LoadTextureFromMemory(pixels, size, size, 4);
+        CoreEngine::TexturePtr tex = CoreEngine::LoadTextureFromMemory(pixels, size, size, 4);
         delete[] pixels;
         return tex;
     }
@@ -99,7 +105,7 @@ namespace Editor {
     static void LoadFBXAtPath(const std::string& path) {
         AssetLoader::ClearAll();
 
-        CoreEngine::FBXModel model = AssetLoader::LoadFBX(path);
+        CoreEngine::FBXModel model = AssetLoader::LoadFBX(path, g_smoothNormals);
         if (!model.success) {
             printf("[Editor] Failed to load FBX '%s'\n", path.c_str());
             return;
@@ -118,32 +124,72 @@ namespace Editor {
         CoreEngine::ClearScene();
         CoreEngine::CreateCameraObject();  // Restore camera after clearing scene
 
-        auto loadedMat = CoreEngine::CreateDefaultMaterial();
-        loadedMat.name = "loaded_model_material";
-        loadedMat.baseColor = model.materialColor;  // Use FBX material color
-        loadedMat.roughness = 0.8f;
-        loadedMat.metallic = 0.2f;
-        loadedMat.useMaterial = true;
+        // Base PBR settings shared by all parts of the model
+        auto baseMat = CoreEngine::CreateDefaultMaterial();
+        baseMat.roughness = 0.8f;
+        baseMat.metallic = 0.2f;
+        baseMat.useMaterial = true;
 
-        // Apply embedded textures from FBX if available
-        printf("[Editor] Model has %zu texture(s)\n", model.textures.size());
-        for (size_t i = 0; i < model.textures.size(); ++i) {
-            const auto& tex = model.textures[i];
-            printf("[Editor] Texture %zu: %dx%d, data=%p\n", i, tex.width, tex.height, tex.data);
-            if (!tex.data) {
-                printf("[Editor]   WARNING: Texture data is null!\n");
-                continue;
+        printf("[Editor] Model has %zu sub-mesh(es), %zu texture(s)\n",
+               model.rawMeshes.size(), model.textures.size());
+
+        // One scene object per sub-mesh, each using ITS OWN material's texture
+        // mapping (set by LoadFBX). Merging everything into a single mesh +
+        // single texture makes sub-meshes with different UV layouts (e.g. a
+        // head with its own texture) sample the wrong map.
+        const bool hasMapping = !model.materialTextures.empty();
+        for (size_t i = 0; i < model.rawMeshes.size(); ++i) {
+            const auto& raw = model.rawMeshes[i];
+
+            int matIdx = raw.materialIndex;
+            if (hasMapping && (matIdx < 0 || matIdx >= (int)model.materialTextures.size()))
+                matIdx = 0;
+            if (!hasMapping) matIdx = 0;
+
+            CoreEngine::Material partMat = baseMat;
+            partMat.name = raw.name + "_material";
+            if (matIdx >= 0 && matIdx < (int)model.materialColors.size()) {
+                partMat.baseColor = model.materialColors[matIdx];
+            } else {
+                partMat.baseColor = model.materialColor;
             }
-            CoreEngine::Texture engineTex = CoreEngine::LoadTextureFromMemory(tex.data, tex.width, tex.height, tex.channels);
-            printf("[Editor]   OpenGL texture ID: %u\n", engineTex.id);
-            loadedMat.diffuseTexture = engineTex;
-            printf("[Editor] Applied embedded texture: %dx%d\n", tex.width, tex.height);
-            break;  // Use the first diffuse texture found
-        }
-        printf("[Editor] Final material baseColor=(%.2f, %.2f, %.2f), diffuseTexture.id=%u\n",
-               loadedMat.baseColor.r, loadedMat.baseColor.g, loadedMat.baseColor.b, loadedMat.diffuseTexture.id);
 
-        CoreEngine::AddToScene("loaded_model", CoreEngine::CreateMesh(AssetLoader::MergeFromModel(model)), loadedMat);
+            // Pick this material's embedded textures (fall back to texture 0
+            // when the FBX has no material-to-texture mapping).
+            int diffuseIdx = -1, normalIdx = -1;
+            if (hasMapping) {
+                diffuseIdx = model.materialTextures[matIdx].diffuseIndex;
+                normalIdx  = model.materialTextures[matIdx].normalIndex;
+            } else if (!model.textures.empty()) {
+                diffuseIdx = 0;
+            }
+
+            if (diffuseIdx >= 0 && diffuseIdx < (int)model.textures.size()) {
+                const auto& tex = model.textures[diffuseIdx];
+                if (tex.data) {
+                    partMat.diffuseTexture = CoreEngine::LoadTextureFromMemory(
+                        tex.data, tex.width, tex.height, tex.channels);
+                    printf("[Editor]   %s (mat %d): diffuse texture %d %dx%d (gl id %u)\n",
+                           raw.name.c_str(), matIdx, diffuseIdx, tex.width, tex.height,
+                           partMat.diffuseTexture ? partMat.diffuseTexture->id : 0u);
+                } else {
+                    printf("[Editor]   %s (mat %d): diffuse texture %d has no data!\n",
+                           raw.name.c_str(), matIdx, diffuseIdx);
+                }
+            }
+            if (normalIdx >= 0 && normalIdx < (int)model.textures.size()) {
+                const auto& tex = model.textures[normalIdx];
+                if (tex.data) {
+                    partMat.normalTexture = CoreEngine::LoadTextureFromMemory(
+                        tex.data, tex.width, tex.height, tex.channels);
+                    printf("[Editor]   %s (mat %d): normal texture %d %dx%d\n",
+                           raw.name.c_str(), matIdx, normalIdx, tex.width, tex.height);
+                }
+            }
+
+            auto partMesh = AssetLoader::MergeSubMesh(model, i);
+            CoreEngine::AddToScene(raw.name, CoreEngine::CreateMesh(std::move(partMesh)), partMat);
+        }
 
         float maxX = fmaxf(modelExtent.x, modelExtent.y);
         float maxDim = fmaxf(maxX, modelExtent.z);
@@ -154,6 +200,10 @@ namespace Editor {
         float dist = maxDim * 4.0f;
         if (dist < 5.0f) dist = 5.0f;
         glm::vec3 camPos(modelCenter.x, modelCenter.y + dist * 0.3f, modelCenter.z - dist);
+        // Aim at the model's center — models may be large and/or offset from
+        // the world origin, so the default (0,0,0) target can leave them
+        // off-center in the view.
+        CoreEngine::SetCameraTarget({modelCenter.x, modelCenter.y, modelCenter.z});
         CoreEngine::SetCameraPosition({camPos.x, camPos.y, camPos.z});
     }
 
@@ -220,7 +270,8 @@ namespace Editor {
                 ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "No objects in scene");
             } else {
                 // Track which object to rename (popup must be handled OUTSIDE the loop)
-                static CoreEngine::SceneObject* g_renameObj = nullptr;
+                // Store ID instead of raw pointer to avoid use-after-free if scene vector reallocates
+                static uint32_t g_renameObjectId = 0;
 
                 for (auto& obj : scene) {
                     bool isSelected = (obj.id == selectedId);
@@ -234,7 +285,7 @@ namespace Editor {
                     }
 
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        g_renameObj = &obj;
+                        g_renameObjectId = obj.id;
                         ImGui::OpenPopup("Rename");
                         // Select object on double-click too
                         CoreEngine::SelectObject(obj.id);
@@ -244,12 +295,21 @@ namespace Editor {
                 }
 
                 // Handle rename popup ONCE per frame (must be outside the loop)
-                if (ImGui::BeginPopup("Rename") && g_renameObj) {
-                    static char buf[256];
-                    strncpy(buf, g_renameObj->name.c_str(), sizeof(buf) - 1);
-                    buf[sizeof(buf) - 1] = '\0';
-                    if (ImGui::InputText("##name", buf, sizeof(buf))) {
-                        g_renameObj->name = buf;
+                if (ImGui::BeginPopup("Rename") && g_renameObjectId != 0) {
+                    // Look up object by ID — safe even if scene vector reallocates
+                    CoreEngine::SceneObject* obj = nullptr;
+                    for (auto& o : scene) {
+                        if (o.id == g_renameObjectId) { obj = &o; break; }
+                    }
+                    if (obj) {
+                        static char buf[256];
+                        strncpy(buf, obj->name.c_str(), sizeof(buf) - 1);
+                        buf[sizeof(buf) - 1] = '\0';
+                        if (ImGui::InputText("##name", buf, sizeof(buf))) {
+                            obj->name = buf;
+                        }
+                    } else {
+                        g_renameObjectId = 0;
                     }
                     ImGui::EndPopup();
                 }
@@ -409,24 +469,25 @@ namespace Editor {
 
                     ImGui::Separator();
                     ImGui::Text("Diffuse Texture");
-                    if (selected->material.diffuseTexture.id) {
+                    if (selected->material.diffuseTexture) {
                         ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Loaded (%dx%d)",
-                            selected->material.diffuseTexture.width,
-                            selected->material.diffuseTexture.height);
+                            selected->material.diffuseTexture->width,
+                            selected->material.diffuseTexture->height);
                         if (ImGui::SmallButton("Unload Texture")) {
-                            CoreEngine::DestroyTexture(selected->material.diffuseTexture);
+                            // Dropping the shared_ptr releases the GL texture
+                            selected->material.diffuseTexture = nullptr;
                         }
                     } else {
                         if (ImGui::Button("Load Texture...", ImVec2(-1, 0))) {
                             // Simple file picker - try common paths
                             static char texPath[MAX_PATH] = {0};
                             if (ImGui::InputText("##texPath", texPath, sizeof(texPath))) {
-                                if (selected->material.diffuseTexture.id) {
-                                    // Already has a texture, destroy it first
-                                    CoreEngine::DestroyTexture(selected->material.diffuseTexture);
-                                }
-                                selected->material.diffuseTexture = CoreEngine::LoadTexture(texPath);
-                                if (!selected->material.diffuseTexture.id) {
+                                CoreEngine::TexturePtr loaded = CoreEngine::LoadTexture(texPath);
+                                if (loaded) {
+                                    // Replaces any previous texture; the old GL object
+                                    // is released when its refcount hits zero
+                                    selected->material.diffuseTexture = loaded;
+                                } else {
                                     printf("[Editor] Failed to load texture: %s\n", texPath);
                                 }
                                 texPath[0] = '\0';
@@ -462,11 +523,10 @@ namespace Editor {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
                 if (ImGui::Button("Delete Object", ImVec2(-1, 0))) {
+                    // Texture cleanup is automatic: the erased object's material
+                    // holds a shared reference, and the GL texture is released
+                    // when the last reference goes away.
                     CoreEngine::RemoveFromScene(selected->id);
-                    // Clean up texture if loaded
-                    if (selected->material.diffuseTexture.id) {
-                        CoreEngine::DestroyTexture(selected->material.diffuseTexture);
-                    }
                 }
                 ImGui::PopStyleColor(2);
             }
@@ -555,6 +615,12 @@ namespace Editor {
                 if (ImGui::MenuItem("Load FBX", "L")) {
                     g_triggerFileDialog = true;
                 }
+                ImGui::MenuItem("Smooth Normals", nullptr, &g_smoothNormals);
+                if (ImGui::IsItemActivated() && !g_lastLoadedFBX.empty()) {
+                    // Re-load the current model so the toggle takes effect immediately
+                    LoadFBXAtPath(g_lastLoadedFBX);
+                    ConsoleLog(g_smoothNormals ? "Smooth normals: ON (model reloaded)" : "Smooth normals: OFF (model reloaded)");
+                }
                 if (ImGui::MenuItem("Exit")) {
                     glfwSetWindowShouldClose(window, GLFW_TRUE);
                 }
@@ -577,7 +643,7 @@ namespace Editor {
                         mat.name = "test_texture_material";
                         mat.baseColor = glm::vec3(1.0f);  // White base so texture colors show through
                         mat.useMaterial = true;
-                        CoreEngine::Texture tex = GenerateCheckerboardTexture();
+                        CoreEngine::TexturePtr tex = GenerateCheckerboardTexture();
                         mat.diffuseTexture = tex;
                         auto& scene = CoreEngine::GetSceneObjects();
                         uint32_t nextId = CoreEngine::GetNextSceneObjectId();
@@ -585,7 +651,7 @@ namespace Editor {
                         obj.position = {0, 0, 0};
                         obj.scale = {1, 1, 1};
                         ConsoleLog("Added test cube with checkerboard texture (verify textures are working!)");
-                        printf("[Editor] Test texture loaded: %dx%d\n", tex.width, tex.height);
+                        if (tex) printf("[Editor] Test texture loaded: %dx%d\n", tex->width, tex->height);
                     }
                 }
                 ImGui::EndMenu();
@@ -742,10 +808,10 @@ namespace Editor {
                 g_prevMouseX = mx;
                 g_prevMouseY = my;
                 if (btn == GLFW_MOUSE_BUTTON_LEFT) g_isOrbiting = true;
-                if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isPanning = true;
+                if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isRotating = true;
             } else {
                 if (btn == GLFW_MOUSE_BUTTON_LEFT) g_isOrbiting = false;
-                if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isPanning = false;
+                if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isRotating = false;
             }
         });
 
@@ -814,18 +880,24 @@ namespace Editor {
         // Set viewport for 3D rendering (center area only)
         glViewport(vpX, vpY, vpW, vpH);
 
-        // Draw skybox first (background) - pass viewport aspect ratio
-        CoreEngine::DrawSkybox(aspect);
+        // Compute actual camera position (original position + orbit + pan)
+        auto offset = CoreEngine::GetCameraOffset();
+        auto cameraTarget = CoreEngine::GetCameraTarget();
+        glm::vec3 camPos(
+            cameraTarget.x + (float)offset.x + g_cameraPanOffset.x,
+            cameraTarget.y + (float)offset.y + g_cameraPanOffset.y,
+            cameraTarget.z + (float)offset.z + g_cameraPanOffset.z);
+
+        // Draw skybox first (background) using the ACTUAL camera position
+        CoreEngine::DrawSkybox(camPos, aspect);
 
         auto& sceneObjs = CoreEngine::GetSceneObjects();
-
-        auto cameraPos = CoreEngine::GetCameraPosition();
-        auto cameraTarget = CoreEngine::GetCameraTarget();
 
         // Apply orbit rotation from mouse delta (skip when ImGui has mouse)
         double mx, my;
         glfwGetCursorPos(CoreEngine::GetWindow(), &mx, &my);
         bool wantCaptureMouse = ImGui::GetIO().WantCaptureMouse;
+
         if (g_isOrbiting && !wantCaptureMouse) {
             float dx = (float)(mx - g_prevMouseX);
             float dy = (float)(my - g_prevMouseY);
@@ -850,6 +922,24 @@ namespace Editor {
             g_prevMouseX = mx;
             g_prevMouseY = my;
         }
+
+        // Apply camera rotation (right-click drag) - modifies view direction
+        if (g_isRotating && !wantCaptureMouse) {
+            float dx = (float)(mx - g_prevMouseX);
+            float dy = (float)(my - g_prevMouseY);
+
+            // Rotate yaw (horizontal) and pitch (vertical)
+            g_cameraYaw -= dx * 0.005f;
+            g_cameraPitch -= dy * 0.005f;
+            g_cameraPitch = glm::clamp(g_cameraPitch, -glm::half_pi<float>() + 0.1f, glm::half_pi<float>() - 0.1f);
+
+            g_prevMouseX = mx;
+            g_prevMouseY = my;
+        }
+
+        // Compute rotation matrix from yaw/pitch
+        glm::mat4 rotationMat = glm::rotate(glm::mat4(1.0f), g_cameraYaw, glm::vec3(0, 1, 0)) *
+                                glm::rotate(glm::mat4(1.0f), g_cameraPitch, glm::vec3(1, 0, 0));
 
         // WASD camera movement (world-space, free look)
         // When WASD is pressed, move camera target along with camera so it never re-orients
@@ -890,16 +980,38 @@ namespace Editor {
             }
         }
 
-        // Compute camera position from target + orbit offset + pan
-        auto offset = CoreEngine::GetCameraOffset();
-        glm::vec3 camPos(cameraTarget.x + (float)offset.x + g_cameraPanOffset.x,
-                         cameraTarget.y + (float)offset.y + g_cameraPanOffset.y,
-                         cameraTarget.z + (float)offset.z + g_cameraPanOffset.z);
-        glm::vec3 camTargetFinal(cameraTarget.x, cameraTarget.y, cameraTarget.z);
-        glm::mat4 view = glm::lookAt(camPos, camTargetFinal, glm::vec3(0, 1, 0));
+        // Camera view matrix with rotation
+        glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
 
-        // Get projection matrix using actual viewport dimensions
-        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, aspect);
+        // Calculate base direction from camera to target
+        glm::vec3 baseDir = normalize(camTarget - camPos);
+
+        // Apply yaw/pitch rotation to direction
+        glm::vec3 rotatedDir = glm::vec3(rotationMat * glm::vec4(baseDir, 0.0f));
+
+        // Build view matrix: look at cameraPos + rotatedDir
+        glm::mat4 view = glm::lookAt(camPos, camPos + rotatedDir, glm::vec3(0, 1, 0));
+
+        // Get projection matrix using actual viewport dimensions.
+        // Extend the far plane so large models (e.g. cm-scale characters that
+        // are hundreds of units tall) aren't clipped by the default 100-unit
+        // far plane: far = furthest scene-object bound, with sane bounds.
+        float farPlane = 100.0f;
+        for (const auto& o : CoreEngine::GetSceneObjects()) {
+            if (o.id == CoreEngine::GetCameraObjectId() || !o.mesh) continue;
+            glm::vec3 objPos(o.position.x, o.position.y, o.position.z);
+            const float d = glm::distance(camPos, objPos);
+            // Bounding-sphere radius: scaled half-extents + local center offset
+            const float radius = glm::length(glm::vec3(o.scale.x * o.mesh->halfExtent.x,
+                                                       o.scale.y * o.mesh->halfExtent.y,
+                                                       o.scale.z * o.mesh->halfExtent.z))
+                               + glm::length(glm::vec3(o.scale.x * o.mesh->center.x,
+                                                      o.scale.y * o.mesh->center.y,
+                                                      o.scale.z * o.mesh->center.z));
+            farPlane = fmaxf(farPlane, d + radius + 10.0f);
+        }
+        farPlane = fminf(farPlane, 100000.0f);  // cap so near/far ratio stays sane
+        glm::mat4 projection = CoreEngine::GetProjectionMatrix(60.0f, aspect, 0.1f, farPlane);
 
 
 
@@ -915,6 +1027,10 @@ namespace Editor {
         GLint projLoc = glGetUniformLocation(prog, "uProjection");
         if (viewLoc != -1) CoreEngine::SetUniformMat4(prog, "uView", view);
         if (projLoc != -1) CoreEngine::SetUniformMat4(prog, "uProjection", projection);
+
+        // World-space camera position for per-pixel view direction (specular)
+        GLint camPosLoc = glGetUniformLocation(prog, "uCameraPos");
+        if (camPosLoc != -1) glUniform3f(camPosLoc, camPos.x, camPos.y, camPos.z);
 
         // Set shadow mapping uniforms (only when shadows are enabled)
         if (g_showShadows) {
@@ -947,6 +1063,13 @@ namespace Editor {
             GLint sfLoc = glGetUniformLocation(prog, "uShadowFar");
             if (snLoc != -1) glUniform1f(snLoc, 0.5f);
             if (sfLoc != -1) glUniform1f(sfLoc, 50.0f);
+
+            // Shadow map resolution (for PCF texel size)
+            GLint shadowSizeLoc = glGetUniformLocation(prog, "uShadowMapSize");
+            if (shadowSizeLoc != -1) {
+                int size = CoreEngine::GetShadowMapWidth();
+                glUniform1f(shadowSizeLoc, (float)size);
+            }
         } else {
             // Shadows disabled — tell shader to skip shadow calc
             GLint hasShadowLoc = glGetUniformLocation(prog, "uHasShadowMap");
@@ -957,8 +1080,25 @@ namespace Editor {
         CoreEngine::DrawGrid(40, 1.0f, 20.0f, view, projection);
 
         for (auto& obj : sceneObjs) {
+            // Skip camera object — it's placed at the camera position,
+            // so rendering it would put the camera inside the cube.
+            if (obj.id == CoreEngine::GetCameraObjectId()) continue;
             auto& mesh = obj.mesh;
-            if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
+            if (!mesh || !mesh->VAO || mesh->indexCount == 0) {
+                // One-time diagnostic: object exists in the scene but has no
+                // renderable geometry (this is why it's invisible).
+                static std::vector<uint32_t> warnedEmptyIds;
+                bool alreadyWarned = false;
+                for (uint32_t w : warnedEmptyIds) if (w == obj.id) { alreadyWarned = true; break; }
+                if (!alreadyWarned) {
+                    warnedEmptyIds.push_back(obj.id);
+                    ConsoleLog(std::string("WARNING: '") + obj.name + "' has empty mesh " +
+                        "(VAO=" + std::to_string(mesh ? mesh->VAO : 0) +
+                        ", indices=" + std::to_string(mesh ? mesh->indexCount : 0) +
+                        ") — not rendered");
+                }
+                continue;
+            }
 
             glUseProgram(prog);
 
@@ -986,11 +1126,11 @@ namespace Editor {
 
             // Textures
             GLint hasDiffuseLoc = glGetUniformLocation(prog, "uHasDiffuse");
-            GLint hasNormalLoc = glGetUniformLocation(prog, "uHasNormal");
+            GLint hasNormalMapLoc = glGetUniformLocation(prog, "uHasNormalMap");
             GLint diffuseLoc = glGetUniformLocation(prog, "uDiffuseTex");
-            GLint normalLoc = glGetUniformLocation(prog, "uNormalTex");
+            GLint normalMapLoc = glGetUniformLocation(prog, "uNormalTex");
 
-            if (obj.material.diffuseTexture.id) {
+            if (obj.material.diffuseTexture) {
                 if (hasDiffuseLoc != -1) glUniform1i(hasDiffuseLoc, 1);
                 if (diffuseLoc != -1) {
                     glActiveTexture(GL_TEXTURE1);
@@ -1000,7 +1140,18 @@ namespace Editor {
             } else {
                 if (hasDiffuseLoc != -1) glUniform1i(hasDiffuseLoc, 0);
             }
-            if (hasNormalLoc != -1) glUniform1i(hasNormalLoc, 0);
+
+            // Normal map texture (separate from diffuse)
+            if (obj.material.normalTexture) {
+                if (hasNormalMapLoc != -1) glUniform1i(hasNormalMapLoc, 1);
+                if (normalMapLoc != -1) {
+                    glActiveTexture(GL_TEXTURE2);
+                    CoreEngine::BindTexture(obj.material.normalTexture, 2);
+                    glUniform1i(normalMapLoc, 2);
+                }
+            } else {
+                if (hasNormalMapLoc != -1) glUniform1i(hasNormalMapLoc, 0);
+            }
 
             glBindVertexArray(mesh->VAO);
             if (mesh->EBO) {
