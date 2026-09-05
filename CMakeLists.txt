@@ -39,6 +39,15 @@ FetchContent_MakeAvailable(imgui)
 # ---- Engine library ----
 add_library(engine STATIC
     engine/src/engine.cpp
+    engine/src/shader.cpp
+    engine/src/primitives.cpp
+    engine/src/scene.cpp
+    engine/src/camera.cpp
+    engine/src/texture.cpp
+    engine/src/material.cpp
+    engine/src/shadow_map.cpp
+    engine/src/skybox.cpp
+    engine/src/debug_draw.cpp
     engine/src/asset_loader.cpp
     engine/src/stb_image_loader.cpp
 )
