@@ -126,17 +126,25 @@ void DrawShadowPass() {
         auto& mesh = obj.mesh;
         if (!mesh || !mesh->VAO || mesh->indexCount == 0) continue;
 
-        // Build model matrix
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(obj.position.x, obj.position.y, obj.position.z));
-        model = glm::rotate(model, (float)obj.rotation.x, glm::vec3(1, 0, 0));
-        model = glm::rotate(model, (float)obj.rotation.y, glm::vec3(0, 1, 0));
-        model = glm::rotate(model, (float)obj.rotation.z, glm::vec3(0, 0, 1));
-        model = glm::scale(model, glm::vec3(obj.scale.x, obj.scale.y, obj.scale.z));
+        // World matrix = parent chain * local TRS (FBX parts are children
+        // of the model root node), so shadows track the animated pose
+        // AND any user transform of the model root.
+        glm::mat4 model = ComputeObjectWorldMatrix(obj.id);
 
         GLint modelLoc = glGetUniformLocation(s_shadowDepthProg, "uModel");
         if (modelLoc != -1) {
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        }
+
+        // Skinning: same bone palette as the main pass so shadows track
+        // the animated pose.
+        static glm::mat4 bonePalette[CoreEngine::MAX_SKIN_BONES];
+        int nBones = Animator::Get().GetBonePalette(obj.id, bonePalette);
+        GLint skinCountLoc = glGetUniformLocation(s_shadowDepthProg, "uSkinCount");
+        if (skinCountLoc != -1) glUniform1i(skinCountLoc, nBones);
+        if (nBones > 0) {
+            GLint bonesLoc = glGetUniformLocation(s_shadowDepthProg, "uBoneMatrices");
+            if (bonesLoc != -1) glUniformMatrix4fv(bonesLoc, nBones, GL_FALSE, glm::value_ptr(bonePalette[0]));
         }
 
         glBindVertexArray(mesh->VAO);

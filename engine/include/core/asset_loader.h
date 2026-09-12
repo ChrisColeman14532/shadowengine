@@ -8,6 +8,13 @@
 namespace AssetLoader {
 
     CoreEngine::FBXModel LoadFBX(const std::string& path, bool smoothNormals = false);
+
+    // Load an animation file: its OWN rest node tree plus its clips (mixamo
+    // downloads: skeleton + keyframes, no geometry). The node tree is needed
+    // by the Animator — clips are evaluated on the animation file's own tree,
+    // where their channels bind by exact name.
+    CoreEngine::AnimationFile LoadFBXAnimation(const std::string& path);
+
     void DestroyFBX(CoreEngine::FBXModel& model);
     void ClearAll();
 

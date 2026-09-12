@@ -118,6 +118,99 @@ namespace {
         return -1;
     }
 
+    // aiMatrix4x4 (members a1..d4: row letter = a/b/c/d, digit = column) →
+    // glm::mat4 (column-major storage: out[col][row])
+    glm::mat4 ToGlmMat4(const aiMatrix4x4& m) {
+        glm::mat4 out;
+        out[0][0] = m.a1; out[0][1] = m.b1; out[0][2] = m.c1; out[0][3] = m.d1;
+        out[1][0] = m.a2; out[1][1] = m.b2; out[1][2] = m.c2; out[1][3] = m.d2;
+        out[2][0] = m.a3; out[2][1] = m.b3; out[2][2] = m.c3; out[2][3] = m.d3;
+        out[3][0] = m.a4; out[3][1] = m.b4; out[3][2] = m.c4; out[3][3] = m.d4;
+        return out;
+    }
+
+    // Recursively add nodes to the flat tree (pre-order: parents always get
+    // lower indices than their children, so world transforms can be computed
+    // in a single forward pass).
+    int AddNodeToTree(const aiNode* n, int parent, std::vector<CoreEngine::AnimNode>& out) {
+        int idx = (int)out.size();
+        CoreEngine::AnimNode an;
+        an.name = n->mName.C_Str();
+        an.parentIndex = parent;
+        an.local = ToGlmMat4(n->mTransformation);
+        out.push_back(std::move(an));
+        for (unsigned i = 0; i < n->mNumMeshes; ++i)
+            out[idx].meshIndices.push_back((int)n->mMeshes[i]);
+        for (unsigned i = 0; i < n->mNumChildren; ++i) {
+            int child = AddNodeToTree(n->mChildren[i], idx, out);
+            out[idx].childIndices.push_back(child);
+        }
+        return idx;
+    }
+
+    void ComputeNodeWorlds(std::vector<CoreEngine::AnimNode>& nodes) {
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            const glm::mat4 parentWorld = (nodes[i].parentIndex >= 0)
+                ? nodes[nodes[i].parentIndex].world : glm::mat4(1.0f);
+            nodes[i].world = parentWorld * nodes[i].local;
+        }
+    }
+
+    // Convert all aiAnimation clips into AnimationClips (key times in seconds).
+    // Channels keep assimp's decomposed wrapper node names
+    // (e.g. "mixamorig:Hips_$AssimpFbx$_Rotation") so they match the node
+    // tree built from a character FBX parsed the same way.
+    void ExtractAnimations(const aiScene* scene, std::vector<CoreEngine::AnimationClip>& out) {
+        for (unsigned a = 0; a < scene->mNumAnimations; ++a) {
+            const aiAnimation* an = scene->mAnimations[a];
+            CoreEngine::AnimationClip clip;
+            clip.name = (an->mName.length > 0) ? an->mName.C_Str()
+                                               : ("animation_" + std::to_string(a));
+            double tps = (an->mTicksPerSecond > 0.0) ? an->mTicksPerSecond : 30.0;
+            clip.fps = (float)tps;
+            clip.duration = (an->mDuration > 0.0) ? (float)(an->mDuration / tps) : 0.0f;
+
+            for (unsigned c = 0; c < an->mNumChannels; ++c) {
+                const aiNodeAnim* ch = an->mChannels[c];
+                CoreEngine::NodeAnimTrack track;
+                track.nodeName = ch->mNodeName.C_Str();
+
+                for (unsigned k = 0; k < ch->mNumPositionKeys; ++k) {
+                    const aiVectorKey& key = ch->mPositionKeys[k];
+                    track.position.push_back({(float)(key.mTime / tps),
+                        glm::vec3(key.mValue.x, key.mValue.y, key.mValue.z)});
+                }
+                for (unsigned k = 0; k < ch->mNumRotationKeys; ++k) {
+                    const aiQuatKey& key = ch->mRotationKeys[k];
+                    // aiQuaternion is (x,y,z,w); glm::quat is (w,x,y,z)
+                    track.rotation.push_back({(float)(key.mTime / tps),
+                        glm::quat(key.mValue.w, key.mValue.x, key.mValue.y, key.mValue.z)});
+                }
+                for (unsigned k = 0; k < ch->mNumScalingKeys; ++k) {
+                    const aiVectorKey& key = ch->mScalingKeys[k];
+                    track.scale.push_back({(float)(key.mTime / tps),
+                        glm::vec3(key.mValue.x, key.mValue.y, key.mValue.z)});
+                }
+
+                if (track.position.empty() && track.rotation.empty() && track.scale.empty())
+                    continue;
+                clip.tracks.push_back(std::move(track));
+            }
+
+            // mDuration can be -1 on some exports; derive it from the keys.
+            if (clip.duration <= 0.0f) {
+                float maxT = 0.0f;
+                for (const auto& tr : clip.tracks) {
+                    if (!tr.position.empty()) maxT = fmaxf(maxT, tr.position.back().time);
+                    if (!tr.rotation.empty()) maxT = fmaxf(maxT, tr.rotation.back().time);
+                    if (!tr.scale.empty()) maxT = fmaxf(maxT, tr.scale.back().time);
+                }
+                clip.duration = maxT;
+            }
+            out.push_back(std::move(clip));
+        }
+    }
+
     bool s_engineInited = false;
     std::vector<CoreEngine::FBXModel> s_allLoadedModels;
 
@@ -162,7 +255,12 @@ namespace AssetLoader {
         }
 
         if (!scene->mMeshes || scene->mNumMeshes == 0) {
-            fprintf(stderr, "[AssetLoader] FBX '%s' contains no meshes\n", path.c_str());
+            if (scene->mNumAnimations > 0) {
+                fprintf(stderr, "[AssetLoader] FBX '%s' contains %u animation(s) but no meshes — "
+                        "use File → Load Animation instead\n", path.c_str(), scene->mNumAnimations);
+            } else {
+                fprintf(stderr, "[AssetLoader] FBX '%s' contains no meshes\n", path.c_str());
+            }
             return model;
         }
 
@@ -220,6 +318,94 @@ namespace AssetLoader {
             model.meshes.push_back(CoreEngine::PrimitiveMesh{});
             model.meshes.back().name = name;
         }
+
+        // ── Node hierarchy (rest pose) + embedded animations ─────────
+        if (scene->mRootNode) {
+            model.nodes.reserve(256);
+            AddNodeToTree(scene->mRootNode, -1, model.nodes);
+            ComputeNodeWorlds(model.nodes);
+            // Attach each mesh to the node that references it
+            for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
+                for (int mi : model.nodes[ni].meshIndices) {
+                    if (mi >= 0 && mi < (int)model.rawMeshes.size()) {
+                        model.rawMeshes[mi].nodeIndex = (int)ni;
+                        model.rawMeshes[mi].nodeName = model.nodes[ni].name;
+                    }
+                }
+            }
+
+            // ── Skinning extraction (needs node worlds) ──────────────
+            // Per-vertex bone indices/weights + per-bone inverse-bind
+            // matrices (formula N, see mesh.h). Meshes with more than
+            // MAX_SKIN_BONES influences render static (rest pose).
+            for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+                const aiMesh* am = scene->mMeshes[i];
+                if (am->mNumBones == 0) continue;
+                CoreEngine::RawMeshData& raw = model.rawMeshes[i];
+                if (raw.nodeIndex < 0 || raw.nodeIndex >= (int)model.nodes.size()) {
+                    printf("[AssetLoader]   WARNING: skinned mesh '%s' not attached to a node — rendered static\n", raw.name.c_str());
+                    continue;
+                }
+                if (am->mNumBones > CoreEngine::MAX_SKIN_BONES) {
+                    printf("[AssetLoader]   WARNING: mesh '%s' has %u bones (max %d) — rendered static\n",
+                           raw.name.c_str(), am->mNumBones, CoreEngine::MAX_SKIN_BONES);
+                    continue;
+                }
+
+                const glm::mat4 Wmesh = model.nodes[raw.nodeIndex].world;
+                const glm::mat4 WmeshInv = glm::inverse(Wmesh);
+                raw.meshWorldRest = Wmesh;
+                raw.skins.assign(am->mNumVertices, CoreEngine::VertexSkin());
+
+                // Per-vertex (bone, weight) accumulation, then sort/normalize.
+                std::vector<std::vector<std::pair<unsigned int, float>>> perVert(am->mNumVertices);
+                for (unsigned b = 0; b < am->mNumBones; ++b) {
+                    const aiBone* bone = am->mBones[b];
+                    CoreEngine::MeshBone mb;
+                    mb.name = bone->mName.C_Str();
+                    mb.modelNode = -1;
+                    for (size_t ni = 0; ni < model.nodes.size(); ++ni) {
+                        if (model.nodes[ni].name == mb.name) { mb.modelNode = (int)ni; break; }
+                    }
+                    if (mb.modelNode < 0) {
+                        printf("[AssetLoader]   WARNING: bone '%s' of mesh '%s' not found in node tree — bone held at identity\n",
+                               mb.name.c_str(), raw.name.c_str());
+                    } else {
+                        mb.restWorld = model.nodes[mb.modelNode].world;
+                        mb.IB = glm::inverse(WmeshInv * mb.restWorld);
+                    }
+                    raw.meshBones.push_back(std::move(mb));
+
+                    for (unsigned w = 0; w < bone->mNumWeights; ++w) {
+                        const aiVertexWeight& vw = bone->mWeights[w];
+                        if (vw.mVertexId < am->mNumVertices)
+                            perVert[vw.mVertexId].push_back({b, (float)vw.mWeight});
+                    }
+                }
+
+                for (size_t v = 0; v < am->mNumVertices; ++v) {
+                    auto& list = perVert[v];
+                    std::sort(list.begin(), list.end(),
+                              [](const auto& a, const auto& b) { return a.second > b.second; });
+                    size_t n = std::min<size_t>(list.size(), 4);
+                    float kept = 0.0f;
+                    for (size_t k = 0; k < n; ++k) kept += list[k].second;
+                    if (kept > 1e-8f) {
+                        auto& sk = raw.skins[v];
+                        for (size_t k = 0; k < n; ++k) {
+                            sk.boneIndices[k] = (uint8_t)list[k].first;
+                            sk.weights[k] = list[k].second / kept;
+                        }
+                    }  // else: keep default (full weight on bone 0)
+                }
+                printf("[AssetLoader]   %s: skinned (%u bones, %u vertices)\n",
+                       raw.name.c_str(), am->mNumBones, (unsigned)am->mNumVertices);
+            }
+        }
+        ExtractAnimations(scene, model.animations);
+        for (const auto& c : model.animations)
+            printf("[AssetLoader] Animation clip '%s': %.3fs, %zu node tracks\n",
+                   c.name.c_str(), c.duration, c.tracks.size());
 
         if (!model.rawMeshes.empty()) {
             model.success = true;
@@ -458,6 +644,41 @@ namespace AssetLoader {
         center = (maxVal + minVal) * 0.5f;
     }
 
+    // Load an animation file (e.g. a mixamo download: skeleton + keyframes,
+    // no meshes). Returns the file's OWN rest node tree plus its clips —
+    // the Animator evaluates clips on this tree, where every channel binds
+    // by exact name.
+    CoreEngine::AnimationFile LoadFBXAnimation(const std::string& path) {
+        CoreEngine::AnimationFile file;
+        file.filename = path;
+
+        Assimp::Importer importer;
+        const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_GenUVCoords);
+        if (!scene) {
+            fprintf(stderr, "[AssetLoader] Failed to load animation FBX '%s': %s\n",
+                    path.c_str(), importer.GetErrorString());
+            return file;
+        }
+        if (scene->mNumAnimations == 0) {
+            fprintf(stderr, "[AssetLoader] FBX '%s' contains no animations\n", path.c_str());
+            return file;
+        }
+
+        // Rest node tree, parsed the SAME way as model files (same flags,
+        // same wrapper decomposition) so channel names match node names.
+        if (scene->mRootNode) {
+            file.nodes.reserve(256);
+            AddNodeToTree(scene->mRootNode, -1, file.nodes);
+            ComputeNodeWorlds(file.nodes);
+        }
+        ExtractAnimations(scene, file.clips);
+        file.success = !file.clips.empty();
+        for (const auto& c : file.clips)
+            printf("[AssetLoader] Animation clip '%s': %.3fs, %zu node tracks\n",
+                   c.name.c_str(), c.duration, c.tracks.size());
+        return file;
+    }
+
     CoreEngine::PrimitiveMesh MergeFromModel(const CoreEngine::FBXModel& model) {
         CoreEngine::PrimitiveMesh merged;
         merged.name = "merged_fbx";
@@ -473,18 +694,45 @@ namespace AssetLoader {
             return merged;
         }
 
+        // The merged layout must be uniform across sub-meshes: if ANY of
+        // them is skinned, all vertices carry the 16-float skinned layout
+        // (non-skinned parts get zero weights — uSkinCount decides usage).
+        bool anySkinned = false;
+        for (const auto& raw : model.rawMeshes) anySkinned |= raw.isSkinned();
+
         std::vector<float> allVertData;
         std::vector<uint32_t> allIndices;
-        allVertData.reserve(totalVerts * VERTEX_FLOAT_STRIDE);
+        const int strideFloats = anySkinned ? 16 : VERTEX_FLOAT_STRIDE;
+        allVertData.reserve(totalVerts * strideFloats);
         allIndices.reserve(totalIndices);
 
         size_t vertOffset = 0;
         for (const auto& raw : model.rawMeshes) {
-            allVertData.insert(allVertData.end(), raw.vertices.begin(), raw.vertices.end());
+            const size_t vertCount = raw.vertices.size() / VERTEX_FLOAT_STRIDE;
+            const bool skinned = anySkinned && raw.isSkinned();
+            for (size_t v = 0; v < vertCount; ++v) {
+                const float* base = &raw.vertices[v * VERTEX_FLOAT_STRIDE];
+                allVertData.insert(allVertData.end(), base, base + VERTEX_FLOAT_STRIDE);
+                if (anySkinned) {
+                    if (skinned) {
+                        const CoreEngine::VertexSkin& sk = raw.skins[v];
+                        allVertData.push_back((float)sk.boneIndices[0]);
+                        allVertData.push_back((float)sk.boneIndices[1]);
+                        allVertData.push_back((float)sk.boneIndices[2]);
+                        allVertData.push_back((float)sk.boneIndices[3]);
+                        for (int k = 0; k < 4; ++k) allVertData.push_back(sk.weights[k]);
+                    } else {
+                        // Static part inside a merged skinned model: bind
+                        // fully to bone 0 of its own (empty) palette — the
+                        // shader never reads it (uSkinCount is per-object).
+                        allVertData.insert(allVertData.end(), {0, 0, 0, 0, 1, 0, 0, 0});
+                    }
+                }
+            }
             for (const auto& idx : raw.indices) {
                 allIndices.push_back(idx + static_cast<uint32_t>(vertOffset));
             }
-            vertOffset += raw.vertices.size() / VERTEX_FLOAT_STRIDE;
+            vertOffset += vertCount;
         }
 
         merged.indexCount = static_cast<uint32_t>(allIndices.size());
@@ -501,15 +749,22 @@ namespace AssetLoader {
 
         // location 0: position (3 floats)
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, strideFloats * sizeof(float), (void*)0);
 
         // location 1: normal (3 floats)
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)(3 * sizeof(float)));
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, strideFloats * sizeof(float), (void*)(3 * sizeof(float)));
 
         // location 2: uv (2 floats)
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)(6 * sizeof(float)));
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, strideFloats * sizeof(float), (void*)(6 * sizeof(float)));
+
+        if (anySkinned) {
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, strideFloats * sizeof(float), (void*)(8 * sizeof(float)));
+            glEnableVertexAttribArray(4);
+            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, strideFloats * sizeof(float), (void*)(12 * sizeof(float)));
+        }
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, allIndices.size() * sizeof(uint32_t), allIndices.data(), GL_STATIC_DRAW);
@@ -530,6 +785,58 @@ namespace AssetLoader {
 
         return merged;
     }
+
+    // ── GPU vertex layout ─────────────────────────────────────────────
+    // Base (all meshes): 8 floats  pos(3) + normal(3) + uv(2)
+    // Skinned:         16 floats  + boneIndices(4) + boneWeights(4)
+    // Attribute locations: 0=pos 1=normal 2=uv 3=boneIndices 4=boneWeights
+    // (3 and 4 are only enabled for skinned meshes; the shaders read them
+    // only when uSkinCount > 0, so non-skinned VAOs are unaffected).
+    namespace {
+        struct GpuVertexData {
+            std::vector<float> floats;   // interleaved vertex data
+            int strideFloats = 8;
+            bool skinned = false;
+        };
+        // Build the interleaved GPU vertex buffer for one raw mesh.
+        GpuVertexData BuildGpuVertexData(const CoreEngine::RawMeshData& raw) {
+            GpuVertexData out;
+            const size_t vertCount = raw.vertices.size() / VERTEX_FLOAT_STRIDE;
+            out.skinned = raw.isSkinned();
+            out.strideFloats = out.skinned ? 16 : VERTEX_FLOAT_STRIDE;
+            out.floats.reserve(vertCount * out.strideFloats);
+            for (size_t v = 0; v < vertCount; ++v) {
+                const float* base = &raw.vertices[v * VERTEX_FLOAT_STRIDE];
+                out.floats.insert(out.floats.end(), base, base + VERTEX_FLOAT_STRIDE);
+                if (out.skinned) {
+                    const CoreEngine::VertexSkin& sk = raw.skins[v];
+                    out.floats.push_back((float)sk.boneIndices[0]);
+                    out.floats.push_back((float)sk.boneIndices[1]);
+                    out.floats.push_back((float)sk.boneIndices[2]);
+                    out.floats.push_back((float)sk.boneIndices[3]);
+                    for (int k = 0; k < 4; ++k) out.floats.push_back(sk.weights[k]);
+                }
+            }
+            return out;
+        }
+        // Bind the standard attribute layout against `vbo` (currently bound
+        // to the array buffer of the VAO being built).
+        void BindStandardAttributes(const GpuVertexData& vd) {
+            const GLsizei stride = (GLsizei)(vd.strideFloats * sizeof(float));
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)(0 * sizeof(float)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+            if (vd.skinned) {
+                glEnableVertexAttribArray(3);
+                glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, (void*)(8 * sizeof(float)));
+                glEnableVertexAttribArray(4);
+                glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, (void*)(12 * sizeof(float)));
+            }
+        }
+    } // namespace
 
     // Build a GPU mesh from a SINGLE sub-mesh (instead of merging the whole
     // model). Used for multi-material models where each sub-mesh is rendered
@@ -564,20 +871,10 @@ namespace AssetLoader {
 
         glBindVertexArray(VAO);
 
+        GpuVertexData vd = BuildGpuVertexData(raw);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, raw.vertices.size() * sizeof(float), raw.vertices.data(), GL_STATIC_DRAW);
-
-        // location 0: position (3 floats)
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)0);
-
-        // location 1: normal (3 floats)
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)(3 * sizeof(float)));
-
-        // location 2: uv (2 floats)
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, VERTEX_FLOAT_STRIDE * sizeof(float), (void*)(6 * sizeof(float)));
+        glBufferData(GL_ARRAY_BUFFER, vd.floats.size() * sizeof(float), vd.floats.data(), GL_STATIC_DRAW);
+        BindStandardAttributes(vd);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, raw.indices.size() * sizeof(uint32_t), raw.indices.data(), GL_STATIC_DRAW);

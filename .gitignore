@@ -60,3 +60,7 @@ AGENTS.md
 
 # imgui config
 imgui.ini
+
+# Tool binaries (runtime DLLs + built test exes)
+*.exe
+*.dll

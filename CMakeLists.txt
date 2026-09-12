@@ -48,6 +48,7 @@ add_library(engine STATIC
     engine/src/shadow_map.cpp
     engine/src/skybox.cpp
     engine/src/debug_draw.cpp
+    engine/src/animation.cpp
     engine/src/asset_loader.cpp
     engine/src/stb_image_loader.cpp
 )
@@ -67,6 +68,11 @@ target_link_libraries(engine PUBLIC
 add_executable(editor
     editor/src/main.cpp
     editor/src/editor.cpp
+    editor/src/editor_state.cpp
+    editor/src/editor_camera.cpp
+    editor/src/editor_ui.cpp
+    editor/src/editor_render.cpp
+    editor/src/editor_asset.cpp
     
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp

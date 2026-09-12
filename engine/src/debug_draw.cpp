@@ -167,13 +167,9 @@ void DrawSelectedObjectBounds(const glm::mat4& view, const glm::mat4& projection
         edgeVerts[(i*6+5)] = p1.z;
     }
 
-    // Build model matrix from object transform (position + rotation + scale)
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(sel->position.x, sel->position.y, sel->position.z));
-    model = glm::rotate(model, (float)sel->rotation.x, glm::vec3(1, 0, 0));
-    model = glm::rotate(model, (float)sel->rotation.y, glm::vec3(0, 1, 0));
-    model = glm::rotate(model, (float)sel->rotation.z, glm::vec3(0, 0, 1));
-    model = glm::scale(model, glm::vec3(sel->scale.x, sel->scale.y, sel->scale.z));
+    // World matrix = parent chain * local TRS, so the bounds box follows
+    // the object's ancestors (e.g. a model root's rotation).
+    glm::mat4 model = ComputeObjectWorldMatrix(sel->id);
 
     static GLuint boundsVBO = 0;
     static GLuint boundsVAO = 0;

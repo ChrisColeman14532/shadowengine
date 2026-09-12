@@ -9,6 +9,7 @@
 #include "core/types.h"
 #include "core/mesh.h"
 #include "core/model.h"
+#include "core/animator.h"
 #include "core/texture.h"
 #include "core/material.h"
 #include "core/scene.h"

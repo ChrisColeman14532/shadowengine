@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include "core/mesh.h"
+#include "core/animation.h"
 
 namespace CoreEngine {
 
@@ -34,6 +35,14 @@ namespace CoreEngine {
         };
         std::vector<MaterialTextureMap> materialTextures;  // one entry per scene material
         std::vector<glm::vec3> materialColors;             // diffuse color per scene material
+
+        // Node hierarchy (rest pose) — includes assimp's decomposed wrapper
+        // nodes so animation channels bind by name. Empty for models loaded
+        // before the node walk was added.
+        std::vector<AnimNode> nodes;
+        // Animation clips found in the file (0 for animation-less models,
+        // 0 for animation-only files — those use LoadFBXAnimation).
+        std::vector<AnimationClip> animations;
     };
 
 } // namespace CoreEngine
