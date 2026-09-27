@@ -1,5 +1,6 @@
 #include "editor_camera.h"
 #include "editor_state.h"
+#include "editor_render.h"
 #include "core/engine.h"
 
 #include <GLFW/glfw3.h>
@@ -44,28 +45,19 @@ namespace Camera {
             }
 
             if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-                if (!ImGui::GetIO().WantCaptureKeyboard) {
-                    float speed = 0.05f;
-                    auto& scene = CoreEngine::GetSceneObjects();
-                    uint32_t selectedId = CoreEngine::GetSelectedObjectId();
-                    for (auto& obj : scene) {
-                        if (obj.id == selectedId && obj.name.find("cube") != std::string::npos) {
-                            if (key == GLFW_KEY_A) obj.rotation.y += speed;
-                            if (key == GLFW_KEY_D) obj.rotation.y -= speed;
-                            if (key == GLFW_KEY_S) obj.rotation.x += speed;
-                            if (key == GLFW_KEY_W) obj.rotation.x -= speed;
-                        }
-                    }
-                }
                 if (key == GLFW_KEY_L) {
                     g_triggerFileDialog = true;
                 }
                 if (key == GLFW_KEY_HOME) {
-                    CoreEngine::ResetCamera();
-                    ConsoleLog("Camera reset to default position");
+                    Reset();
                 }
             }
         });
+
+        // Left-press position tracking: a short (≤ 5 px) press→release in the
+        // 3D viewport counts as a pick; a longer drag orbits the camera.
+        static bool  s_clickCandidate = false;
+        static float s_pressX = 0.0f, s_pressY = 0.0f;
 
         glfwGetCursorPos(window, &g_prevMouseX, &g_prevMouseY);
         glfwSetMouseButtonCallback(window, [](GLFWwindow* w, int btn, int action, int mods) {
@@ -75,10 +67,33 @@ namespace Camera {
                 glfwGetCursorPos(w, &mx, &my);
                 g_prevMouseX = mx;
                 g_prevMouseY = my;
-                if (btn == GLFW_MOUSE_BUTTON_LEFT) g_isOrbiting = true;
+                // Ignore presses that land on the ImGui UI (panels, menus).
+                if (ImGui::GetIO().WantCaptureMouse) {
+                    s_clickCandidate = false;
+                    if (btn == GLFW_MOUSE_BUTTON_LEFT) g_isOrbiting = true;
+                    if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isRotating = true;
+                    return;
+                }
+                if (btn == GLFW_MOUSE_BUTTON_LEFT) {
+                    g_isOrbiting = true;
+                    s_pressX = (float)mx;
+                    s_pressY = (float)my;
+                    s_clickCandidate = true;
+                }
                 if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isRotating = true;
             } else {
-                if (btn == GLFW_MOUSE_BUTTON_LEFT) g_isOrbiting = false;
+                if (btn == GLFW_MOUSE_BUTTON_LEFT) {
+                    g_isOrbiting = false;
+                    if (s_clickCandidate && !ImGui::GetIO().WantCaptureMouse) {
+                        double mx, my;
+                        glfwGetCursorPos(w, &mx, &my);
+                        float dx = (float)mx - s_pressX;
+                        float dy = (float)my - s_pressY;
+                        if (dx * dx + dy * dy <= 25.0f)  // ≤ 5 px of movement
+                            TryPickAtMouse(w, s_pressX, s_pressY);
+                    }
+                    s_clickCandidate = false;
+                }
                 if (btn == GLFW_MOUSE_BUTTON_RIGHT) g_isRotating = false;
             }
         });
@@ -88,7 +103,7 @@ namespace Camera {
             // Don't zoom camera if ImGui is using the scroll (e.g. console scroll)
             if (ImGui::GetIO().WantCaptureMouse) return;
             auto offset = CoreEngine::GetCameraOffset();
-            float zoom = 1.0f + (float)dy * 0.05f;
+            float zoom = 1.0f - (float)dy * 0.05f;
             if (zoom < 0.1f) zoom = 0.1f;
             if (zoom > 50.0f) zoom = 50.0f;
             offset.x *= zoom;
@@ -96,6 +111,18 @@ namespace Camera {
             offset.z *= zoom;
             CoreEngine::SetCameraOffset(offset);
         });
+    }
+
+    // Reset ALL editor camera state (orbit radius/angle, pan offset, and the
+    // yaw/pitch accumulated from right-drag) back to defaults.
+    // CoreEngine::ResetCamera() alone only resets the orbit part, so calling
+    // it directly left stale pan/yaw/pitch and produced a "partial" reset.
+    void Reset() {
+        g_cameraPanOffset = glm::vec3(0.0f);
+        g_cameraYaw = 0.0f;
+        g_cameraPitch = 0.0f;
+        CoreEngine::ResetCamera();
+        ConsoleLog("Camera reset to default position");
     }
 
     glm::vec3 ComputeCameraPosition() {
@@ -107,7 +134,7 @@ namespace Camera {
             target.z + (float)offset.z + g_cameraPanOffset.z);
     }
 
-    void UpdateInput(GLFWwindow* window) {
+    void UpdateInput(GLFWwindow* window, float dt) {
         // Apply orbit rotation from mouse delta (skip when ImGui has mouse)
         double mx, my;
         glfwGetCursorPos(window, &mx, &my);
@@ -177,7 +204,9 @@ namespace Camera {
             }
 
             if (moving) {
-                float speed = 5.0f * 0.02f;
+                // Scaled by delta time so the pan speed is frame-rate
+                // independent (5.0 * 0.02 units/frame at 60 fps == 6 u/s).
+                float speed = 6.0f * dt;
                 g_cameraPanOffset.x += (float)keyX * speed;
                 g_cameraPanOffset.y += (float)keyY * speed;
                 g_cameraPanOffset.z += (float)keyZ * speed;

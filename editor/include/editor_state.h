@@ -18,10 +18,19 @@ namespace Editor {
 
     // Panel visibility (toggled from the View menu)
     extern bool g_showSceneHierarchy;
+    extern bool g_showAssetBrowser;
     extern bool g_showInspector;
     extern bool g_showStatusBar;
-    extern bool g_showShadows;
     extern bool g_showAnimationPanel;
+
+    // Whether shadow maps are rendered (the "Enable Shadows" checkbox in
+    // the Shadow Settings panel) — rendering state, not panel visibility
+    extern bool g_showShadows;
+
+    // Shadow Settings panel visibility (View → Shadows), kept separate
+    // from g_showShadows so the menu toggles the panel like every other
+    // View item while the checkbox controls actual shadow rendering
+    extern bool g_showShadowSettings;
 
     // Set by the File menu / L key, consumed by RenderFrame
     extern bool g_triggerFileDialog;

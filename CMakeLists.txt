@@ -10,6 +10,10 @@ project(ShadowEngine VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# GLM >= 1.0 disables swizzle operators (.xyz, .xy, ...) by default; the
+# codebase uses them throughout, so opt back in.
+add_compile_definitions(GLM_FORCE_SWIZZLE)
+
 # ---- Find dependencies via vcpkg (GLEW, assimp), FetchContent for GLFW ----
 find_package(glfw3 QUIET)
 if(NOT glfw3_FOUND)
@@ -50,6 +54,7 @@ add_library(engine STATIC
     engine/src/debug_draw.cpp
     engine/src/animation.cpp
     engine/src/asset_loader.cpp
+    engine/src/ecs_scene.cpp
     engine/src/stb_image_loader.cpp
 )
 target_include_directories(engine PUBLIC
@@ -73,6 +78,7 @@ add_executable(editor
     editor/src/editor_ui.cpp
     editor/src/editor_render.cpp
     editor/src/editor_asset.cpp
+    editor/src/editor_assetbrowser.cpp
     
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
@@ -109,6 +115,8 @@ add_custom_command(TARGET editor POST_BUILD
         ${CMAKE_CURRENT_SOURCE_DIR}/shader/skybox.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shader/grid.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shader/grid.frag
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/ground.vert
+        ${CMAKE_CURRENT_SOURCE_DIR}/shader/ground.frag
         ${CMAKE_CURRENT_SOURCE_DIR}/shader/bounds.vert
         ${CMAKE_CURRENT_SOURCE_DIR}/shader/bounds.frag
         $<TARGET_FILE_DIR:editor>/shader/

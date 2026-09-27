@@ -14,7 +14,7 @@ namespace CoreEngine {
 
     // Max bones per skinned mesh (also the size of the uBoneMatrices[]
     // uniform array in the skinning shaders). Mixamo rigs use ~22-65.
-    static constexpr int MAX_SKIN_BONES = 64;
+    static constexpr int MAX_SKIN_BONES = 128;
 
     // Per-vertex skinning influence: up to 4 bones. Bone indices are indices
     // into the owning mesh's bone list (RawMeshData::meshBones). Weights are

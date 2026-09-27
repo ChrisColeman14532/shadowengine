@@ -7,6 +7,8 @@
 
 #include "engine_internal.h"
 
+using Vector3 = CoreEngine::Vector3;
+
 namespace CoreEngine {
 
 void InitSkybox() {
@@ -76,14 +78,13 @@ void InitSkybox() {
     s_skyboxInited = true;
 }
 
-void DrawSkybox(glm::vec3 cameraPosition, float aspect) {
+void DrawSkybox(Vector3 cameraPosition, Vector3 cameraTarget, float aspect) {
+    glm::vec3 camPos(cameraPosition.x, cameraPosition.y, cameraPosition.z);
+    glm::vec3 camTarget(cameraTarget.x, cameraTarget.y, cameraTarget.z);
     if (!s_skyboxInited || !s_window) return;
 
-    // Use the passed camera position so the skybox tracks the actual view camera
-    glm::mat4 view = glm::lookAt(
-        cameraPosition,
-        glm::vec3(0.0f),  // look at origin (center of skybox)
-        glm::vec3(0, 1, 0));
+    // Use the camera's actual view direction so the skybox follows camera rotation
+    glm::mat4 view = glm::lookAt(camPos, camTarget, glm::vec3(0, 1, 0));
 
     glm::mat4 projection = glm::perspective(glm::radians(60.0f), aspect, 0.1f, 100.0f);
 

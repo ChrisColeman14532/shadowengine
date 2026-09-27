@@ -47,13 +47,16 @@ void Shutdown() {
 
 std::string GetEngineName() { return ENGINE_NAME; }
 
-void GetVersion(int& major, int& minor) { major = VERSION_MAJOR; minor = VERSION_MINOR; }
+void GetVersion(int& major, int& minor, int& patch) {
+    major = VERSION_MAJOR; minor = VERSION_MINOR; patch = VERSION_PATCH;
+}
 
 EngineInfo GetEngineInfo(int width, int height) {
     EngineInfo info;
     info.name = ENGINE_NAME;
     info.majorVersion = VERSION_MAJOR;
     info.minorVersion = VERSION_MINOR;
+    info.patchVersion = VERSION_PATCH;
     return info;
 }
 

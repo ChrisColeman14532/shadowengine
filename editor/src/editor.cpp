@@ -5,6 +5,7 @@
 #include "editor_ui.h"
 #include "editor_render.h"
 #include "editor_asset.h"
+#include "editor_assetbrowser.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -15,15 +16,17 @@ namespace Editor {
         CoreEngine::Init();
 
         std::string name = CoreEngine::GetEngineName();
-        int major, minor;
-        CoreEngine::GetVersion(major, minor);
-        std::cout << "[Editor] Starting " << name << " v" << major << "." << minor << std::endl;
+        int major, minor, patch;
+        CoreEngine::GetVersion(major, minor, patch);
+        std::cout << "[Editor] Starting " << name << " v" << major << "." << minor << "." << patch << std::endl;
 
-        const char* title = name.c_str();
+        // Title bar shows the engine version, e.g. "ShadowEngine v0.2.3".
+        std::string title = name + " v" + std::to_string(major) + "." +
+                            std::to_string(minor) + "." + std::to_string(patch);
         int width = 1280;
         int height = 720;
 
-        if (!CoreEngine::InitRenderer(title, width, height)) {
+        if (!CoreEngine::InitRenderer(title.c_str(), width, height)) {
             return nullptr;
         }
 
@@ -32,7 +35,7 @@ namespace Editor {
 
         CoreEngine::EngineInfo info = CoreEngine::GetEngineInfo(width, height);
         std::cout << "[Editor] Engine communication OK - \"" << info.name
-                  << "\" v" << info.majorVersion << "." << info.minorVersion << std::endl;
+                  << "\" v" << info.majorVersion << "." << info.minorVersion << "." << info.patchVersion << std::endl;
 
         InitImGui(CoreEngine::GetWindow());
 
@@ -51,13 +54,21 @@ namespace Editor {
         // Orbit / rotate / zoom / WASD input + editor hotkeys
         Camera::InstallInputCallbacks(CoreEngine::GetWindow());
 
+        // Files dropped from Windows Explorer (or any OS source) go to the
+        // Asset Browser: they are copied into assets/ and listed there.
+        glfwSetDropCallback(CoreEngine::GetWindow(),
+            [](GLFWwindow* window, int count, const char* paths[]) {
+                (void)window;
+                AssetBrowser::QueueExternalFiles(count, paths);
+            });
+
         return CoreEngine::GetWindow();
     }
 
     void ShutDown(GLFWwindow* window) {
-        CoreEngine::CleanupShadowMap();
         CoreEngine::ClearScene();
         ShutdownImGui();
+        CoreEngine::Shutdown();
     }
 
     bool IsRunning(GLFWwindow* window) {
@@ -65,6 +76,9 @@ namespace Editor {
     }
 
     void RenderFrame(GLFWwindow* window) {
+        // Import files queued by the GLFW drop callback (Explorer drags)
+        AssetBrowser::PumpExternalDrops();
+
         if (g_triggerFileDialog) {
             g_triggerFileDialog = false;
             LoadFBXFromFileDialog(window);
@@ -77,16 +91,14 @@ namespace Editor {
         // Advance animation playback (and refresh bone palettes) before
         // rendering. dt is clamped so a backgrounded window doesn't skip
         // ahead of the clip on return.
-        {
-            static float s_lastFrameTime = -1.0f;
-            float now = (float)glfwGetTime();
-            float dt = (s_lastFrameTime < 0.0f) ? 0.0f : (now - s_lastFrameTime);
-            s_lastFrameTime = now;
-            if (dt > 0.1f) dt = 0.1f;
-            CoreEngine::Animator::Get().Tick(dt);
-        }
+        static float s_lastFrameTime = -1.0f;
+        float now = (float)glfwGetTime();
+        float dt = (s_lastFrameTime < 0.0f) ? 0.0f : (now - s_lastFrameTime);
+        s_lastFrameTime = now;
+        if (dt > 0.1f) dt = 0.1f;
+        CoreEngine::Animator::Get().Tick(dt);
 
-        RenderScene3D(window);
+        RenderScene3D(window, dt);
         RenderImGui(window);
         CoreEngine::RenderEnd();
     }

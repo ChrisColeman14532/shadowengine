@@ -7,9 +7,16 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cmath>
 #include <algorithm>
 #include <float.h>
+#include <memory>
+
+// Cross-platform case-insensitive string compare
+#if defined(_MSC_VER)
+    #define strcasecmp _stricmp
+#endif
 
 // stb_image wrapper — declarations only (implementation is in stb_image_loader.cpp)
 #include "stb_image_loader.h"
@@ -102,17 +109,43 @@ namespace {
     }
 
     // Find the embedded texture index referenced by a material slot, or -1.
-    // Embedded textures are referenced by paths like "*0", "*1", ... where the
-    // number is the zero-based index into aiScene::mTextures.
-    int FindEmbeddedTextureIndex(const aiMaterial* mat, aiTextureType type, unsigned int texCount) {
+    // Handles both "*N" references AND string paths (e.g. FBX files where the
+    // material stores a filename like "Arissa_DIFF_diffuse.png" and the embedded
+    // texture lives in scene->mTextures with a matching URI).
+    int FindEmbeddedTextureIndex(const aiMaterial* mat, aiTextureType type, const aiScene* scene) {
+        unsigned int texCount = scene->mNumTextures;
         unsigned int count = mat->GetTextureCount(type);
         for (unsigned int i = 0; i < count; ++i) {
             aiString path;
             if (mat->GetTexture(type, i, &path) != AI_SUCCESS) continue;
             const char* c = path.C_Str();
-            if (c && c[0] == '*') {
+            if (!c) continue;
+
+            // Case 1: "*N" direct reference into scene->mTextures
+            if (c[0] == '*') {
                 int idx = atoi(c + 1);
                 if (idx >= 0 && idx < static_cast<int>(texCount)) return idx;
+            }
+
+            // Case 2: String path — extract the filename and match against
+            // embedded texture URIs in the scene.
+            // The path may be an absolute path, relative path, or bare filename.
+            // We only need the last component (after the final '/').
+            const char* filename = c;
+            for (const char* p = c; *p; ++p) {
+                if (*p == '/' || *p == '\\') filename = p + 1;
+            }
+            // Try matching against each embedded texture's filename.
+            // The aiTexture struct stores the original path in mFilename.
+            for (unsigned int j = 0; j < texCount; ++j) {
+                const char* texFilename = scene->mTextures[j]->mFilename.C_Str();
+                if (!texFilename) continue;
+                const char* texPath = texFilename;
+                for (const char* p = texFilename; *p; ++p) {
+                    if (*p == '/' || *p == '\\') texPath = p + 1;
+                }
+                // Compare just the filename (case-insensitive)
+                if (strcasecmp(filename, texPath) == 0) return static_cast<int>(j);
             }
         }
         return -1;
@@ -211,24 +244,24 @@ namespace {
         }
     }
 
-    bool s_engineInited = false;
+    // Every FBXModel loaded this session (cleared in ClearAll).
     std::vector<CoreEngine::FBXModel> s_allLoadedModels;
 
-    void EnsureEngineInit() {
-        if (!s_engineInited) {
-            CoreEngine::Init();
-            s_engineInited = true;
-        }
-    }
-
-    // Track embedded textures across all loaded models for cleanup
-    static std::vector<CoreEngine::FBXModel::EmbeddedTexture*> s_allEmbeddedTextures;
+    // Sole owners of the embedded-texture pixel buffers.
+    //
+    // LoadFBX fills model.textures with raw unsigned char* pointing at
+    // malloc/stbi-allocated buffers, but the local FBXModel is destroyed
+    // when LoadFBX returns (and the cached copy in s_allLoadedModels only
+    // shallow-copies the pointers). Storing pointers INTO model.textures
+    // here would therefore dangle immediately, so ownership of each buffer
+    // lives exactly once in this vector instead. stbi_image_free is plain
+    // free() for both the malloc'd uncompressed copies and the
+    // stbi-decoded compressed buffers.
+    using EmbeddedTextureBuffer = std::unique_ptr<unsigned char, decltype(&stbi_image_free)>;
+    static std::vector<EmbeddedTextureBuffer> s_embeddedTextureBuffers;
 
     void CleanupEmbeddedTextures() {
-        for (auto* etexPtr : s_allEmbeddedTextures) {
-            stbi_image_free(etexPtr->data);
-        }
-        s_allEmbeddedTextures.clear();
+        s_embeddedTextureBuffers.clear();  // frees each buffer exactly once
     }
 
 } // namespace
@@ -473,11 +506,14 @@ namespace AssetLoader {
                 const aiMaterial* mat = scene->mMaterials[m];
 
                 CoreEngine::FBXModel::MaterialTextureMap map;
-                map.diffuseIndex = FindEmbeddedTextureIndex(mat, aiTextureType_DIFFUSE, scene->mNumTextures);
+                map.diffuseIndex = FindEmbeddedTextureIndex(mat, aiTextureType_DIFFUSE, scene);
                 if (map.diffuseIndex < 0) {
-                    map.diffuseIndex = FindEmbeddedTextureIndex(mat, aiTextureType_BASE_COLOR, scene->mNumTextures);
+                    map.diffuseIndex = FindEmbeddedTextureIndex(mat, aiTextureType_BASE_COLOR, scene);
                 }
-                map.normalIndex = FindEmbeddedTextureIndex(mat, aiTextureType_NORMALS, scene->mNumTextures);
+                map.normalIndex = FindEmbeddedTextureIndex(mat, aiTextureType_NORMALS, scene);
+                if (map.normalIndex < 0) {
+                    map.normalIndex = FindEmbeddedTextureIndex(mat, aiTextureType_NORMAL_CAMERA, scene);
+                }
                 model.materialTextures.push_back(map);
 
                 aiColor3D diffColor(1, 1, 1);
@@ -595,7 +631,10 @@ namespace AssetLoader {
 
                 model.textures.push_back(etex);
                 if (etex.data) {
-                    s_allEmbeddedTextures.push_back(&model.textures.back());
+                    // Transfer buffer ownership to the stable list above.
+                    // model.textures (and the cached copy) keep a
+                    // NON-OWNING raw pointer, valid until ClearAll().
+                    s_embeddedTextureBuffers.emplace_back(etex.data, stbi_image_free);
                 }
             }
         } else {

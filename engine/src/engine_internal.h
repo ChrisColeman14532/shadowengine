@@ -16,6 +16,7 @@
 
 #include "core/mesh.h"
 #include "core/scene.h"
+#include "core/ecs.h"
 
 namespace CoreEngine {
 
@@ -31,9 +32,16 @@ namespace CoreEngine {
     inline GLuint      s_vbo        = 0;
 
     // ── Orbit camera ───────────────────────────────────────────────
-    inline Vector3 s_cameraPos    = {15, 12, 25};
+    // World units are cm (1m = 100 units). The default offset sits ~3m from
+    // the origin, nearly level with a slight upward pitch: the camera sits
+    // just below the target height, so the skybox horizon rests slightly
+    // below the center of the screen. Far enough out to frame a 1m cube or
+    // a ~1.8m character without ending up inside the geometry.
+    // s_cameraOffset must equal s_cameraPos - s_cameraTarget (the orbit
+    // direction vector); keep them in sync.
+    inline Vector3 s_cameraPos    = {60, 45, 90};
     inline Vector3 s_cameraTarget = {0, 0, 0};
-    inline Vector3 s_cameraOffset = {0, -1.5f, -5};
+    inline Vector3 s_cameraOffset = {60, 45, 90};
 
     // ── Scene ──────────────────────────────────────────────────────
     inline std::vector<SceneObject> s_sceneObjects;
@@ -60,10 +68,17 @@ namespace CoreEngine {
     inline int     s_shadowWidth     = 2048;
     inline int     s_shadowHeight    = 2048;
     inline Vector3 s_shadowLightDir  = {0.5f, 1.0f, 0.3f};  // Sun-like direction
+    inline bool    s_shadowFrustumDirty = true;  // recompute frustum next frame
 
-    inline constexpr float SHADOW_NEAR         = 0.5f;
-    inline constexpr float SHADOW_FAR          = 50.0f;
-    inline constexpr float SHADOW_PLANE_HALF   = 15.0f;  // Half extent of shadow frustum
+    // ECS (scene integration — see core/ecs.h)
+    // The world mirrors the scene objects (entity id == scene object id)
+    // every TickEcs(); systems (transform hierarchy) run over it.
+    inline Ecs::World         s_ecsWorld;
+    inline Ecs::SystemManager s_ecsSystems;
+    inline bool s_ecsSystemsRegistered = false;
+
+    inline constexpr float SHADOW_NEAR         = 100.0f;
+    inline constexpr float SHADOW_FAR          = 500.0f;
     inline constexpr float SHADOW_NEAR_PLANE   = 5.0f;   // Distance from light to near plane (so camera is behind light)
 
     // ── Cross-file helpers (internal) ──────────────────────────────

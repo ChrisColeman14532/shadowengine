@@ -1,6 +1,8 @@
 #include "editor_ui.h"
 #include "editor_state.h"
+#include "editor_camera.h"
 #include "editor_asset.h"
+#include "editor_assetbrowser.h"
 #include "core/engine.h"
 
 #include <imgui.h>
@@ -77,30 +79,70 @@ namespace Editor {
         const float menuBarH = 28.0f;
         const float consoleH = 150.0f;
         const float panelH = mainSize.y - menuBarH - consoleH;
+        // When the Asset Browser is docked below, split the left column
+        // (must match AssetBrowser::RenderPanel's 0.45f share).
+        const float hierarchyH = g_showAssetBrowser ? panelH * 0.55f : panelH;
 
         ImGui::SetNextWindowPos(ImVec2(mainPos.x + 0, mainPos.y + menuBarH));
-        ImGui::SetNextWindowSize(ImVec2(280, panelH));
+        ImGui::SetNextWindowSize(ImVec2(280, hierarchyH));
         if (ImGui::Begin("Scene Hierarchy", nullptr)) {
-            // ── Add Object Dropdown ─────────────────────────────────────
-            static const char* addItemOptions[] = {"Add Cube", "Add Plane", "Add Camera"};
-            static int selectedItem = -1;
+            // ── Drop target: assets dragged in from the Asset Browser ──
+            // BeginDragDropTarget() uses the LAST item's rect, so submit an
+            // invisible full-window Dummy first to make the whole panel a
+            // valid drop target, then restore the cursor to the START OF
+            // THE CONTENT. (SetCursorPos(0,0) is NOT that: it targets the
+            // window's top-left corner, i.e. inside the title bar, so any
+            // widget drawn there ends up hidden behind the title bar.)
+            {
+                const ImVec2 contentStart = ImGui::GetCursorPos();
+                const ImVec2 dropSize = ImGui::GetContentRegionAvail();
+                ImGui::Dummy(dropSize);
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(AssetBrowser::PayloadType())) {
+                        // Delivered: mouse released over the hierarchy
+                        AssetBrowser::AddToScene(std::string(
+                            static_cast<const char*>(payload->Data), payload->DataSize));
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SetCursorPos(contentStart);
+            }
 
-            if (ImGui::Combo("##addItem", &selectedItem, addItemOptions, IM_ARRAYSIZE(addItemOptions))) {
+            // ── Add Object Menu ──────────────────────────────────────────
+            // BeginMenu works inside a regular window too (not just MenuBar),
+            // and — unlike Combo with a hidden label + index -1 — its label
+            // is always visible, so it can't vanish into a blank button.
+            int addSelection = -1;
+            if (ImGui::BeginMenu("Add Object")) {
+                if (ImGui::MenuItem("Add Cube"))   addSelection = 0;
+                if (ImGui::MenuItem("Add Plane"))  addSelection = 1;
+                if (ImGui::MenuItem("Add Camera")) addSelection = 2;
+                ImGui::EndMenu();
+            }
+
+            if (addSelection != -1) {
                 auto meshCube = CoreEngine::GetPrimitiveMesh("cube");
                 auto meshPlane = CoreEngine::GetPrimitiveMesh("plane");
                 auto& scene = CoreEngine::GetSceneObjects();
                 uint32_t nextId = CoreEngine::GetNextSceneObjectId();
 
-                switch (selectedItem) {
+                switch (addSelection) {
                     case 0: { // Add Cube
                         if (meshCube) {
                             auto mat = CoreEngine::CreateDefaultMaterial();
                             mat.name = "cube_material";
                             uint32_t objId = CoreEngine::AddToScene("cube_" + std::to_string(nextId), meshCube, mat);
                             if (CoreEngine::SceneObject* obj = CoreEngine::GetSceneObject(objId)) {
-                                obj->position = {0, 0, 0};
+                                // Rest on the floor: the base cube is 1m (100 units)
+                                // with halfExtent.y = 50, so centering at y = 50 puts
+                                // the bottom face on the ground (y = 0).
+                                obj->position = {0, 50.0f, 0};
                                 obj->scale = {1, 1, 1};
                             }
+                            // Select the new object so the Inspector fills in
+                            // immediately instead of waiting for a click.
+                            CoreEngine::SelectObject(objId);
                             ConsoleLog("Added cube");
                         }
                         break;
@@ -114,17 +156,22 @@ namespace Editor {
                                 obj->position = {0, -1.0f, 0};
                                 obj->scale = {10, 1, 10};
                             }
+                            // Select the new object so the Inspector fills in
+                            // immediately instead of waiting for a click.
+                            CoreEngine::SelectObject(objId);
                             ConsoleLog("Added plane");
                         }
                         break;
                     }
                     case 2: { // Add Camera
                         CoreEngine::CreateCameraObject();
+                        // Select the new object so the Inspector fills in
+                        // immediately instead of waiting for a click.
+                        CoreEngine::SelectObject(CoreEngine::GetCameraObjectId());
                         ConsoleLog("Added camera");
                         break;
                     }
                 }
-                selectedItem = -1; // Reset dropdown
             }
 
             ImGui::Separator();
@@ -212,6 +259,17 @@ namespace Editor {
                 CoreEngine::Animator::Get().Reset();
                 ConsoleLog("Scene cleared");
             }
+
+            // Hovering (not released yet) with an asset payload: outline hint.
+            if (const ImGuiPayload* peek = ImGui::GetDragDropPayload()) {
+                if (peek->IsDataType(AssetBrowser::PayloadType())) {
+                    const ImVec2 p = ImGui::GetWindowPos();
+                    const ImVec2 s = ImGui::GetWindowSize();
+                    ImGui::GetWindowDrawList()->AddRect(
+                        p, ImVec2(p.x + s.x, p.y + s.y),
+                        IM_COL32(120, 220, 120, 200), 0.0f, 0, 2.0f);
+                }
+            }
         }
         ImGui::End();
     }
@@ -291,12 +349,9 @@ namespace Editor {
                 }
 
                 ImGui::Separator();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                if (ImGui::Button("Delete Camera", ImVec2(-1, 0))) {
-                    // Can't delete camera, just deselect
+                if (ImGui::Button("Deselect", ImVec2(-1, 0))) {
                     CoreEngine::SelectObject(0);
                 }
-                ImGui::PopStyleColor();
 
             } else {
                 // Regular object inspector (also used for model roots / groups)
@@ -643,13 +698,13 @@ namespace Editor {
             }
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Scene Hierarchy", nullptr, &g_showSceneHierarchy);
+                ImGui::MenuItem("Asset Browser", nullptr, &g_showAssetBrowser);
                 ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
                 ImGui::MenuItem("Console", nullptr, &g_showStatusBar);
                 ImGui::MenuItem("Animation", nullptr, &g_showAnimationPanel);
-                ImGui::MenuItem("Shadows", nullptr, &g_showShadows);
+                ImGui::MenuItem("Shadows", nullptr, &g_showShadowSettings);
                 if (ImGui::MenuItem("Reset Camera", "Home")) {
-                    CoreEngine::ResetCamera();
-                    ConsoleLog("Camera reset to default position");
+                    Camera::Reset();
                 }
                 if (ImGui::MenuItem("Test Texture (Colored Cube)")) {
                     // Create a cube with a checkerboard texture to verify texture rendering works
@@ -680,6 +735,9 @@ namespace Editor {
         if (g_showSceneHierarchy) {
             RenderSceneHierarchy();
         }
+        if (g_showAssetBrowser) {
+            AssetBrowser::RenderPanel();
+        }
         if (g_showInspector) {
             RenderInspector();
         }
@@ -691,7 +749,9 @@ namespace Editor {
             RenderAnimationPanel();
         }
 
-        RenderShadowSettingsPanel();
+        if (g_showShadowSettings) {
+            RenderShadowSettingsPanel();
+        }
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

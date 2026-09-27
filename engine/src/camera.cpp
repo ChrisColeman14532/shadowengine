@@ -28,8 +28,13 @@ void SetCameraOffset(Vector3 offset) {
     s_cameraOffset = offset;
     s_cameraPos = s_cameraTarget + offset;
 }
+// Default framing: a 3/4 view from above the origin, looking down at the
+// ground grid (Unity-style). The camera sits above the y=0 ground plane so
+// the grid is seen from above, receding to the horizon.
+// Keep in sync with the s_cameraPos/s_cameraOffset initializers in
+// engine_internal.h.
 void ResetCamera() {
-    s_cameraPos = {15, 12, 25};
+    s_cameraPos = {60, 45, 90};
     s_cameraTarget = {0, 0, 0};
     s_cameraOffset = s_cameraPos - s_cameraTarget;
 }

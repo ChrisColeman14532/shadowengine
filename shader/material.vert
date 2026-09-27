@@ -13,7 +13,7 @@ uniform mat4 uProjection;
 // uBoneMatrices[i] = J(bone i, t) — maps mesh-local vertex positions to
 // skinned mesh-local positions (computed by the engine's Animator).
 uniform int  uSkinCount;
-uniform mat4 uBoneMatrices[64];
+uniform mat4 uBoneMatrices[128];
 
 out vec3 vNormal;
 out vec2 vUV;

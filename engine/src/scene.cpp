@@ -154,6 +154,7 @@ void ClearScene() {
     s_selectedObjectId = 0;
     s_cameraObjectId = 0;  // Reset so camera gets recreated on next CreateCameraObject()
     s_sceneObjects.clear();
+    GetEcsWorld().Clear();  // drop the ECS projection of the scene
 }
 
 void RemoveFromScene(uint32_t id) {

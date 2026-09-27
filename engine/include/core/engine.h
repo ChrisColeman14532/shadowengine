@@ -19,3 +19,4 @@
 #include "core/debug_draw.h"
 #include "core/shader.h"
 #include "core/renderer.h"
+#include "core/ecs.h"

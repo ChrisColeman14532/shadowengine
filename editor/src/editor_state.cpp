@@ -5,13 +5,15 @@ namespace Editor {
     std::string g_lastLoadedFBX;
     std::vector<uint32_t> g_lastModelObjectIds;
     bool g_showSceneHierarchy = true;
+    bool g_showAssetBrowser = true;
     bool g_showInspector = true;
     bool g_showStatusBar = false;
     bool g_showAnimationPanel = false;
     bool g_triggerFileDialog = false;
     bool g_triggerAnimFileDialog = false;
     bool g_smoothNormals = false;  // Recompute smooth normals when loading FBX
-    bool g_showShadows = true;    // Shadows enabled by default
+    bool g_showShadows = true;            // Shadows enabled by default
+    bool g_showShadowSettings = true;     // Shadow Settings panel visible by default
 
     // Console log storage
     std::vector<std::string> g_consoleLog;

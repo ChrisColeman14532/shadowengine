@@ -17,6 +17,7 @@ namespace CoreEngine {
     struct EngineInfo {
         int majorVersion;
         int minorVersion;
+        int patchVersion;
         std::string name;
     };
 

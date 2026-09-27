@@ -64,3 +64,10 @@ imgui.ini
 # Tool binaries (runtime DLLs + built test exes)
 *.exe
 *.dll
+
+# Local scratch / references / app config
+.obsidian/
+tmp_test/
+root6.txt
+UnityGrid.png
+UnityGrid2.png

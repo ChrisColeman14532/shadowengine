@@ -9,7 +9,7 @@ uniform mat4 uModel;
 // Skinning (must match material.vert): same J matrices from the Animator,
 // so cast shadows track the animated pose.
 uniform int  uSkinCount;
-uniform mat4 uBoneMatrices[64];
+uniform mat4 uBoneMatrices[128];
 
 void main() {
     vec3 pos = aPos;

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "engine_internal.h"
 
@@ -211,11 +212,26 @@ void buildPrimitiveVAOs() {
         -0.5f,  0.5f, -0.5f,  -1,0,0,  0,1,
     };
 
+    // Base cube is 1m per edge. World units are centimetres (1m = 100 units),
+    // so scale the unit-cube source data (±0.5) ×100 → ±50 before upload.
+    static constexpr float kUnitsPerMeter = 100.0f;
+    const size_t cubeVertCount = sizeof(cubeVerts) / (sizeof(float) * 8);
+    std::vector<float> cubeUpload(cubeVertCount * 8);
+    for (size_t v = 0; v < cubeVertCount; ++v) {
+        const float* s = &cubeVerts[v * 8];
+        float* d = &cubeUpload[v * 8];
+        d[0] = s[0] * kUnitsPerMeter;  // position.x
+        d[1] = s[1] * kUnitsPerMeter;  // position.y
+        d[2] = s[2] * kUnitsPerMeter;  // position.z
+        d[3] = s[3]; d[4] = s[4]; d[5] = s[5];  // normal
+        d[6] = s[6]; d[7] = s[7];                    // uv
+    }
+
     glGenVertexArrays(1, &cube.VAO);
     glGenBuffers(1, &cube.VBO);
     glBindVertexArray(cube.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, cube.VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, cubeUpload.size() * sizeof(float), cubeUpload.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(float)*8, (void*)0);
     glEnableVertexAttribArray(1);
@@ -228,7 +244,7 @@ void buildPrimitiveVAOs() {
     // No EBO — use glDrawArrays
     cube.EBO = 0;
     cube.indexCount = sizeof(cubeVerts) / (sizeof(float) * 8);
-    cube.halfExtent = {0.5f, 0.5f, 0.5f};  // vertices go from -0.5 to +0.5
+    cube.halfExtent = {50.0f, 50.0f, 50.0f};  // 1m cube: vertices go from -50 to +50 units
     s_primitiveMeshes.push_back(CoreEngine::CreateMesh(std::move(cube)));
 
     // Build plane mesh - 2 triangles = 6 vertices

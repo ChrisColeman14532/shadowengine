@@ -12,13 +12,18 @@ namespace Camera {
     // zoom (scroll), WASD/QE pan, plus editor hotkeys.
     void InstallInputCallbacks(GLFWwindow* window);
 
+    // Reset the full editor camera (orbit radius/angle, pan offset, and
+    // yaw/pitch rotation) back to defaults. Use instead of calling
+    // CoreEngine::ResetCamera() directly, which skips the editor-local state.
+    void Reset();
+
     // World-space camera position: target + orbit offset + pan offset.
     glm::vec3 ComputeCameraPosition();
 
     // Apply this frame's input deltas (orbit / rotate / WASD pan).
     // Call once per frame AFTER the camera position was computed and
     // BEFORE the view matrix is built.
-    void UpdateInput(GLFWwindow* window);
+    void UpdateInput(GLFWwindow* window, float dt);
 
     // View matrix for the given camera position + target, including
     // the yaw/pitch rotation accumulated from right-drag.

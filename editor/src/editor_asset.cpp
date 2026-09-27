@@ -217,6 +217,10 @@ namespace Editor {
                        std::to_string(CoreEngine::GetSceneObjects().size()) + " object(s)");
         }
 
+        // Select the new model root so the Inspector immediately shows the
+        // imported model's transform (no click needed).
+        CoreEngine::SelectObject(modelRootId);
+
         // Frame the camera on the model's FILE-space bounding box
         glm::vec3 modelCenter = haveAnyGeo ? (fileMin + fileMax) * 0.5f : glm::vec3(0.0f);
         glm::vec3 modelExtent = haveAnyGeo ? (fileMax - fileMin) * 0.5f : glm::vec3(1.0f);
@@ -245,12 +249,32 @@ namespace Editor {
                 }
             }
         }
+
+        // Auto-bind animations embedded in the model file (mixamo FBXs ship
+        // the skeleton + animation in the same file).
+        if (!model.animations.empty()) {
+            CoreEngine::AnimationFile animFile;
+            animFile.filename = baseName;
+            animFile.nodes  = std::move(model.nodes);  // rest-pose node tree
+            animFile.clips  = std::move(model.animations); // clips extracted from FBX
+            animFile.success = true;
+
+            if (CoreEngine::Animator::Get().Bind(animFile)) {
+                const auto* clip = CoreEngine::Animator::Get().ActiveClip();
+                if (clip) {
+                    printf("[Editor] Auto-bound animation '%s' (%.3fs, %zu skinned object(s))\n",
+                           clip->name.c_str(), clip->duration,
+                           CoreEngine::Animator::Get().GetSkinObjectCount());
+                }
+            }
+        }
     }
 
         void ReloadLastFBX() {
         // Remove the parts from the previous import, then re-import so new
         // settings (e.g. smooth normals) apply in place without duplicating
         // the model in the scene.
+        CoreEngine::Animator::Get().Reset();
         for (uint32_t id : g_lastModelObjectIds) {
             CoreEngine::RemoveFromScene(id);
             CoreEngine::Animator::Get().UnregisterObject(id);
