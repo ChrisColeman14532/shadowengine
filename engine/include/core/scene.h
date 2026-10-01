@@ -28,6 +28,13 @@ namespace CoreEngine {
         // created when an FBX is imported. All parts of that model are
         // its children.
         bool isGroup = false;
+
+        // Mesh provenance (for .scene serialization). Empty meshFile
+        // means the mesh is a built-in primitive (referenced by the
+        // mesh's own name); a non-empty meshFile is the source FBX
+        // path and meshSubmesh is the raw-mesh name within it.
+        std::string meshFile = "";
+        std::string meshSubmesh = "";
     };
 
     // World-space transform of a scene object: local TRS multiplied by

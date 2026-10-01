@@ -32,7 +32,6 @@ namespace Editor {
         if (win) glfwGetFramebufferSize(win, &w, &h);
         if (w < 1) w = 1280;
         if (h < 1) h = 720;
-
         // NOTE: we deliberately do NOT clear the scene here. Importing a model
         // ADDS its parts to the scene; existing objects (planes, cubes, models
         // imported earlier) are left untouched. AssetLoader::ClearAll() above
@@ -44,8 +43,9 @@ namespace Editor {
         baseMat.metallic = 0.2f;
         baseMat.useMaterial = true;
 
-        printf("[Editor] Model has %zu sub-mesh(es), %zu texture(s)\n",
-               model.rawMeshes.size(), model.textures.size());
+        size_t nSub = model.rawMeshes.size();
+        size_t nTex = model.textures.size();
+        printf("[Editor] Model has %zu sub-mesh(es), %zu texture(s)\n", nSub, nTex);
 
         // One scene object per sub-mesh, each using ITS OWN material's texture
         // mapping (set by LoadFBX). Merging everything into a single mesh +
@@ -65,7 +65,6 @@ namespace Editor {
             if (dot != std::string::npos) baseName = baseName.substr(0, dot);
         }
         if (baseName.empty() || baseName == ".") baseName = "model";
-
         // The file's root node may carry the exported model's overall
         // transform. Parts hold their node transforms RELATIVE to it, so
         // the root object itself starts at the identity.
@@ -169,6 +168,11 @@ namespace Editor {
             }
             added->parentId = modelRootId;
 
+            // Mesh provenance for .scene save/load: the object's mesh is
+            // re-imported from this file's sub-mesh when the scene loads.
+            added->meshFile = path;
+            added->meshSubmesh = raw.name;
+
             // File-space AABB contribution (local AABB × local matrix)
             {
                 size_t vstride = raw.isSkinned() ? 16 : 8;  // floats per vertex
@@ -258,7 +262,6 @@ namespace Editor {
             animFile.nodes  = std::move(model.nodes);  // rest-pose node tree
             animFile.clips  = std::move(model.animations); // clips extracted from FBX
             animFile.success = true;
-
             if (CoreEngine::Animator::Get().Bind(animFile)) {
                 const auto* clip = CoreEngine::Animator::Get().ActiveClip();
                 if (clip) {

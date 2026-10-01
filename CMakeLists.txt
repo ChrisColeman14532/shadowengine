@@ -30,6 +30,7 @@ find_package(OpenGL REQUIRED)
 find_package(GLEW CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(rapidjson CONFIG REQUIRED)  # header-only JSON (.scene files)
 
 # ---- Dear ImGui (via FetchContent) ----
 include(FetchContent)
@@ -56,6 +57,7 @@ add_library(engine STATIC
     engine/src/asset_loader.cpp
     engine/src/ecs_scene.cpp
     engine/src/stb_image_loader.cpp
+    engine/src/scene_file.cpp
 )
 target_include_directories(engine PUBLIC
     engine/include
@@ -67,6 +69,7 @@ target_link_libraries(engine PUBLIC
     GLEW::GLEW
     assimp::assimp
     glm::glm-header-only
+    RapidJSON
 )
 
 # ---- Editor executable ----

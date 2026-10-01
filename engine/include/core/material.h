@@ -18,6 +18,11 @@ namespace CoreEngine {
         float ao = 1.0f;          // ambient occlusion multiplier
         TexturePtr diffuseTexture;   // nullptr means no texture
         TexturePtr normalTexture;    // nullptr means no texture
+        // Source of the GPU textures (for .scene serialization): file
+        // path on disk, or "" when the texture is procedural / embedded.
+        // See core/scene_file.h for how these are used.
+        std::string diffuseTexturePath;
+        std::string normalTexturePath;
         bool useMaterial = false;
     };
     Material CreateDefaultMaterial();

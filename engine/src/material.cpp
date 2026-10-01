@@ -13,7 +13,8 @@ Material CreateDefaultMaterial() {
         1.0f,             // roughness
         1.0f,             // AO
         {}, {},           // diffuseTexture, normalTexture (nullptr = no texture)
-        false
+        {}, {},           // diffuseTexturePath, normalTexturePath ("" = procedural / embedded)
+        false             // useMaterial
     };
 }
 
