@@ -39,6 +39,16 @@ namespace Editor {
     // native file dialog, then loads + binds the animation)
     extern bool g_triggerAnimFileDialog;
 
+    // Set by File → Open Scene... / Ctrl+O, consumed by RenderFrame
+    extern bool g_triggerOpenSceneFile;
+
+    // Set by File → Save Scene / Ctrl+S, consumed by RenderFrame. Saves to
+    // the current scene path, or opens the Save-As dialog when none yet.
+    extern bool g_triggerSaveSceneFile;
+
+    // Set by File → Save Scene As..., consumed by RenderFrame
+    extern bool g_triggerSaveSceneAsFile;
+
     // Recompute smooth normals when loading FBX (File menu)
     extern bool g_smoothNormals;
 

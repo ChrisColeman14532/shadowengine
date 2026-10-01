@@ -44,6 +44,12 @@ namespace Camera {
                 }
             }
 
+            // Ctrl+O: open scene file; Ctrl+S: save scene file
+            if (action == GLFW_PRESS && (mods & GLFW_MOD_CONTROL)) {
+                if (key == GLFW_KEY_O) g_triggerOpenSceneFile = true;
+                if (key == GLFW_KEY_S) g_triggerSaveSceneFile = true;
+            }
+
             if (action == GLFW_PRESS || action == GLFW_REPEAT) {
                 if (key == GLFW_KEY_L) {
                     g_triggerFileDialog = true;
@@ -182,6 +188,11 @@ namespace Camera {
         // WASD camera movement (world-space, free look)
         // When WASD is pressed, move camera target along with camera so it never re-orients
         {
+            // While Ctrl is held, WASD must NOT move the camera — Ctrl+S
+            // (and Ctrl+O) are editor shortcuts, and 'S'/'W' would otherwise
+            // pan the view at the same time as saving.
+            bool ctrlHeld = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS
+                         || glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
             bool moving = false;
             double keyX = 0.0, keyY = 0.0, keyZ = 0.0;
             if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_A) == GLFW_REPEAT) {
@@ -202,6 +213,7 @@ namespace Camera {
             if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_E) == GLFW_REPEAT) {
                 keyZ = -1.0f; moving = true;
             }
+            if (ctrlHeld) moving = false;
 
             if (moving) {
                 // Scaled by delta time so the pan speed is frame-rate

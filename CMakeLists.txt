@@ -82,6 +82,7 @@ add_executable(editor
     editor/src/editor_render.cpp
     editor/src/editor_asset.cpp
     editor/src/editor_assetbrowser.cpp
+    editor/src/editor_scene.cpp
     
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp

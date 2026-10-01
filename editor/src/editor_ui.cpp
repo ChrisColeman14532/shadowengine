@@ -430,6 +430,7 @@ namespace Editor {
                         if (ImGui::SmallButton("Unload Texture")) {
                             // Dropping the shared_ptr releases the GL texture
                             selected->material.diffuseTexture = nullptr;
+                            selected->material.diffuseTexturePath.clear();
                         }
                     } else {
                         // ImGui::Button() is only true for ONE frame (the click frame),
@@ -459,6 +460,9 @@ namespace Editor {
                                     // Replaces any previous texture; the old GL object
                                     // is released when its refcount hits zero
                                     selected->material.diffuseTexture = loaded;
+                                    // Remember the source so .scene save/load can
+                                    // restore the texture from disk.
+                                    selected->material.diffuseTexturePath = texPath;
                                     showTexPathInput = false;
                                     texPath[0] = '\0';
                                 } else {
@@ -676,6 +680,16 @@ namespace Editor {
         // Menu bar
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+                if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
+                    g_triggerOpenSceneFile = true;
+                }
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) {
+                    g_triggerSaveSceneFile = true;
+                }
+                if (ImGui::MenuItem("Save Scene As...")) {
+                    g_triggerSaveSceneAsFile = true;
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Load FBX", "L")) {
                     g_triggerFileDialog = true;
                 }

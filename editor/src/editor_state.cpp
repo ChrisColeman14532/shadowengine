@@ -11,6 +11,9 @@ namespace Editor {
     bool g_showAnimationPanel = false;
     bool g_triggerFileDialog = false;
     bool g_triggerAnimFileDialog = false;
+    bool g_triggerOpenSceneFile = false;
+    bool g_triggerSaveSceneFile = false;
+    bool g_triggerSaveSceneAsFile = false;
     bool g_smoothNormals = false;  // Recompute smooth normals when loading FBX
     bool g_showShadows = true;            // Shadows enabled by default
     bool g_showShadowSettings = true;     // Shadow Settings panel visible by default

@@ -186,6 +186,7 @@ namespace AssetBrowser {
                 return false;
             }
             sel->material.diffuseTexture = tex;
+            sel->material.diffuseTexturePath = fullPath;
             sel->material.useMaterial = true;
             ConsoleLog("Asset Browser: applied " + name + " to '" + sel->name + "'");
             return true;

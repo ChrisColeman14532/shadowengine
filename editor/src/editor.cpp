@@ -6,9 +6,18 @@
 #include "editor_render.h"
 #include "editor_asset.h"
 #include "editor_assetbrowser.h"
+#include "editor_scene.h"
+#include "core/scene_file.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <string>
+
+namespace {
+    // Base window title (engine name + version); RenderFrame prefixes the
+    // current scene file name to it.
+    std::string g_baseTitle;
+}
 
 namespace Editor {
 
@@ -21,12 +30,13 @@ namespace Editor {
         std::cout << "[Editor] Starting " << name << " v" << major << "." << minor << "." << patch << std::endl;
 
         // Title bar shows the engine version, e.g. "ShadowEngine v0.2.3".
-        std::string title = name + " v" + std::to_string(major) + "." +
-                            std::to_string(minor) + "." + std::to_string(patch);
+        // (RenderFrame prefixes the scene file name once one is open.)
+        g_baseTitle = name + " v" + std::to_string(major) + "." +
+                      std::to_string(minor) + "." + std::to_string(patch);
         int width = 1280;
         int height = 720;
 
-        if (!CoreEngine::InitRenderer(title.c_str(), width, height)) {
+        if (!CoreEngine::InitRenderer(g_baseTitle.c_str(), width, height)) {
             return nullptr;
         }
 
@@ -86,6 +96,39 @@ namespace Editor {
         if (g_triggerAnimFileDialog) {
             g_triggerAnimFileDialog = false;
             LoadAnimationFromFileDialog(window);
+        }
+        if (g_triggerOpenSceneFile) {
+            g_triggerOpenSceneFile = false;
+            OpenSceneFromFileDialog(window);
+        }
+        if (g_triggerSaveSceneAsFile) {
+            g_triggerSaveSceneAsFile = false;
+            SaveSceneFromFileDialog(window);
+        }
+        if (g_triggerSaveSceneFile) {
+            g_triggerSaveSceneFile = false;
+            // Ctrl+S: save to the current path, or Save-As when none yet.
+            const std::string& path = CoreEngine::GetSceneFilePath();
+            if (path.empty())
+                SaveSceneFromFileDialog(window);
+            else
+                SaveSceneToFile(path);
+        }
+
+        // Keep the title bar in sync with the open scene file.
+        {
+            // "" (no scene yet) matches the title set in Init().
+            static std::string s_lastScenePath;
+            const std::string& scenePath = CoreEngine::GetSceneFilePath();
+            if (scenePath != s_lastScenePath) {
+                s_lastScenePath = scenePath;
+                std::string fileName = scenePath;
+                size_t slash = fileName.find_last_of("/\\");
+                if (slash != std::string::npos) fileName = fileName.substr(slash + 1);
+                glfwSetWindowTitle(window, (fileName.empty()
+                    ? g_baseTitle
+                    : fileName + " - " + g_baseTitle).c_str());
+            }
         }
 
         // Advance animation playback (and refresh bone palettes) before
