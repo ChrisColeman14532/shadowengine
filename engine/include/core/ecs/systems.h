@@ -28,9 +28,11 @@ namespace CoreEngine { namespace Ecs {
     inline glm::mat4 TransformLocalMatrix(const Transform& t) {
         glm::mat4 m = glm::translate(glm::mat4(1.0f),
                                      glm::vec3(t.position.x, t.position.y, t.position.z));
-        m = m * glm::rotate(glm::mat4(1.0f), glm::radians(t.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-        m = m * glm::rotate(glm::mat4(1.0f), glm::radians(t.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-        m = m * glm::rotate(glm::mat4(1.0f), glm::radians(t.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        // Rotation values are RADIANS (same convention as
+        // Scene::ObjectLocalMatrix) — do NOT wrap in glm::radians().
+        m = m * glm::rotate(glm::mat4(1.0f), t.rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+        m = m * glm::rotate(glm::mat4(1.0f), t.rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+        m = m * glm::rotate(glm::mat4(1.0f), t.rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
         m = m * glm::scale(glm::mat4(1.0f),
                            glm::vec3(t.scale.x, t.scale.y, t.scale.z));
         return m;

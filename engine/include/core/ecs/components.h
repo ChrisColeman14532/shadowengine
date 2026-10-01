@@ -20,8 +20,9 @@
 
 namespace CoreEngine { namespace Ecs {
 
-    // Local transform + parent link. Rotation is XYZ Euler in DEGREES,
-    // applied X then Y then Z — matching Scene::ObjectLocalMatrix.
+    // Local transform + parent link. Rotation is XYZ Euler in RADIANS
+    // (copied from SceneObject::rotation), applied X then Y then Z —
+    // matching Scene::ObjectLocalMatrix.
     struct Transform {
         Vector3 position{0.0f, 0.0f, 0.0f};
         Vector3 rotation{0.0f, 0.0f, 0.0f};

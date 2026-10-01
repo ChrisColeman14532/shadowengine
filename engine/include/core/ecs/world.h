@@ -23,6 +23,7 @@
 // Header-only; no GL dependency (component types may carry mesh refs,
 // the World itself doesn't care).
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -121,6 +122,12 @@ namespace CoreEngine { namespace Ecs {
         // means a genuine conflict.
         Entity CreateEntity(Entity id) {
             if (id == INVALID_ENTITY || IsAlive(id)) return INVALID_ENTITY;
+            // Keep the free list consistent: an explicitly reserved id
+            // must not also be handed out by a later no-arg CreateEntity()
+            // (Destroy() pushes ids onto freeList_, so an id can be both
+            // free-listed and re-reserved explicitly).
+            freeList_.erase(std::remove(freeList_.begin(), freeList_.end(), id),
+                             freeList_.end());
             Reserve(id);
             return id;
         }
